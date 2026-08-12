@@ -1,3 +1,4 @@
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -320,6 +321,40 @@ def test_http_transport_deadline_includes_headers_and_body_wait():
         server.shutdown()
         server.server_close()
     assert elapsed is not None and elapsed < 0.3
+
+
+def test_http_transport_deadline_is_not_blocked_by_uncancellable_dns(monkeypatch):
+    slow_dns = """
+import socket
+import time
+
+def slow_getaddrinfo(*args, **kwargs):
+    time.sleep(0.7)
+    raise socket.gaierror("fixture DNS failure")
+
+socket.getaddrinfo = slow_getaddrinfo
+"""
+    monkeypatch.setattr(HttpxTransport, "_WORKER", slow_dns + HttpxTransport._WORKER)
+    children = []
+    original_popen = subprocess.Popen
+
+    def capture_popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        children.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    started = time.monotonic()
+    with pytest.raises(FeedIntakeError, match="deadline"):
+        HttpxTransport().request(
+            "http://slow.invalid/feed",
+            {},
+            timeout_seconds=0.2,
+            max_bytes=1024,
+        )
+    assert time.monotonic() - started < 0.35
+    assert len(children) == 1
+    assert children[0].poll() is not None
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):

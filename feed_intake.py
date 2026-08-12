@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import asyncio
+import base64
 import calendar
 import hashlib
 import html
+import json
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -15,7 +18,6 @@ from typing import Callable, Protocol
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import feedparser
-import httpx
 
 _DB_LOCKS: dict[str, threading.RLock] = {}
 _DB_LOCKS_GUARD = threading.Lock()
@@ -55,50 +57,88 @@ class Transport(Protocol):
 
 
 class HttpxTransport:
-    @staticmethod
-    async def _request(url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
-        async with asyncio.timeout(timeout_seconds):
-            async with httpx.AsyncClient(follow_redirects=False, timeout=timeout_seconds) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    declared = response.headers.get("content-length")
-                    if declared:
-                        try:
-                            if int(declared) > max_bytes:
-                                raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
-                        except ValueError as exc:
-                            raise FeedIntakeError("invalid Content-Length") from exc
-                    body = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
-                    return Response(response.status_code, dict(response.headers), bytes(body))
+    _WORKER = r"""
+import base64
+import json
+import sys
+import httpx
+
+request = json.loads(sys.stdin.read())
+try:
+    with httpx.Client(follow_redirects=False, timeout=request["timeout_seconds"], trust_env=False) as client:
+        with client.stream("GET", request["url"], headers=request["headers"]) as response:
+            declared = response.headers.get("content-length")
+            if declared:
+                try:
+                    if int(declared) > request["max_bytes"]:
+                        raise RuntimeError("too_large")
+                except ValueError:
+                    raise RuntimeError("invalid_content_length")
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                if len(body) > request["max_bytes"]:
+                    raise RuntimeError("too_large")
+            result = {
+                "ok": True,
+                "status": response.status_code,
+                "headers": dict(response.headers),
+                "body": base64.b64encode(bytes(body)).decode("ascii"),
+            }
+except RuntimeError as exc:
+    result = {"ok": False, "error": str(exc)}
+except httpx.HTTPError as exc:
+    result = {"ok": False, "error": "httpx:" + type(exc).__name__}
+except BaseException as exc:
+    result = {"ok": False, "error": "internal:" + type(exc).__name__}
+sys.stdout.write(json.dumps(result, separators=(",", ":")))
+"""
 
     def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
-        result: list[Response] = []
-        errors: list[BaseException] = []
-
-        def run() -> None:
-            try:
-                result.append(
-                    asyncio.run(self._request(url, headers, timeout_seconds=timeout_seconds, max_bytes=max_bytes))
-                )
-            except BaseException as exc:
-                errors.append(exc)
-
-        thread = threading.Thread(target=run, name="rss-atom-http", daemon=True)
-        thread.start()
-        thread.join()
-        if errors:
-            exc = errors[0]
-            if isinstance(exc, FeedIntakeError):
-                raise exc
-            if isinstance(exc, TimeoutError):
-                raise FeedIntakeError("feed response exceeded total deadline") from exc
-            if isinstance(exc, httpx.HTTPError):
-                raise FeedIntakeError(f"feed request failed: {type(exc).__name__}") from exc
-            raise exc
-        return result[0]
+        payload = json.dumps(
+            {
+                "url": url,
+                "headers": headers,
+                "timeout_seconds": timeout_seconds,
+                "max_bytes": max_bytes,
+            },
+            separators=(",", ":"),
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", self._WORKER],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            stdout, _ = process.communicate(payload, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            raise FeedIntakeError("feed response exceeded total deadline") from exc
+        if process.returncode != 0:
+            raise FeedIntakeError("feed request worker failed")
+        try:
+            result = json.loads(stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise FeedIntakeError("feed request worker returned invalid data") from exc
+        if not result.get("ok"):
+            error = str(result.get("error") or "")
+            if error == "too_large":
+                raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
+            if error == "invalid_content_length":
+                raise FeedIntakeError("invalid Content-Length")
+            if error.startswith("httpx:"):
+                raise FeedIntakeError(f"feed request failed: {error.removeprefix('httpx:')}")
+            raise FeedIntakeError("feed request worker failed")
+        try:
+            body = base64.b64decode(result["body"], validate=True)
+            status = int(result["status"])
+            response_headers = {str(key): str(value) for key, value in result["headers"].items()}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FeedIntakeError("feed request worker returned invalid data") from exc
+        return Response(status, response_headers, body)
 
 
 class _PlainText(HTMLParser):
