@@ -7,18 +7,23 @@ query recent entries and refresh status.
 
 ## Tools
 
-- `rss_list_feeds`
+- `rss_list_feeds(category="")`
 - `rss_refresh_feed(name)`
-- `rss_recent_entries(limit=20, name="")`
+- `rss_recent_entries(limit=20, name="", category="")`
 - `rss_feed_status(name)`
 
 Feeds and bounded intake settings are operator configuration, not agent-mutable
 state. In protoAgent, open **Plugins → RSS / Atom Intake → Configure**. Add one
-feed per row using `Name | URL`, for example:
+feed per row using `Category | Name | URL`, for example:
 
 ```text
-protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom
+Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom
 ```
+
+Existing `Name | URL` rows remain valid and appear under **Uncategorized**.
+Enabled plugins also contribute a **News** rail view. Its category selector
+filters configured sources and stored articles, and its **Refresh category**
+button performs an explicit operator-triggered refresh of only that category.
 
 The generic plugin settings dialog also controls:
 
@@ -33,7 +38,8 @@ The object form remains accepted for existing config files:
 ```yaml
 rss_atom:
   feeds:
-    - name: Example
+    - category: Technology
+      name: Example
       url: https://example.com/feed.xml
   max_items_per_refresh: 100
   default_recent_items: 20

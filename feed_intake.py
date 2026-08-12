@@ -532,9 +532,23 @@ class FeedIntake:
             return {"status": "never_refreshed", "error": ""}
         return {"status": row["last_status"], "error": row["last_error"]}
 
-    def recent_entries(self, limit: int = 20, feed_url: str = "") -> list[dict[str, str]]:
-        where = "WHERE feed_url = ?" if feed_url else ""
-        params: tuple[str | int, ...] = (feed_url, limit) if feed_url else (limit,)
+    def recent_entries(
+        self, limit: int = 20, feed_url: str = "", feed_urls: list[str] | None = None
+    ) -> list[dict[str, str]]:
+        if feed_url and feed_urls is not None:
+            raise ValueError("feed_url and feed_urls are mutually exclusive")
+        if feed_url:
+            where = "WHERE feed_url = ?"
+            params: tuple[str | int, ...] = (feed_url, limit)
+        elif feed_urls is not None:
+            if not feed_urls:
+                return []
+            placeholders = ",".join("?" for _ in feed_urls)
+            where = f"WHERE feed_url IN ({placeholders})"
+            params = (*feed_urls, limit)
+        else:
+            where = ""
+            params = (limit,)
         with self._connect() as db:
             rows = db.execute(
                 "SELECT entry_id, feed_url, title, link, published, summary "
@@ -542,3 +556,16 @@ class FeedIntake:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def count_entries(self, feed_urls: list[str] | None = None) -> int:
+        if feed_urls is not None:
+            if not feed_urls:
+                return 0
+            placeholders = ",".join("?" for _ in feed_urls)
+            query = f"SELECT COUNT(*) FROM entries WHERE feed_url IN ({placeholders})"
+            params: tuple[str, ...] = tuple(feed_urls)
+        else:
+            query = "SELECT COUNT(*) FROM entries"
+            params = ()
+        with self._connect() as db:
+            return int(db.execute(query, params).fetchone()[0])

@@ -22,9 +22,11 @@ The complete first-slice interface is four tools:
 4. report the latest refresh status for one feed.
 
 Configured sources and intake bounds are operator input through protoAgent's
-generic plugin settings UI. GUI feed rows use `Name | URL`; the existing
-`{name, url}` YAML object form remains compatible. The agent cannot add, edit,
-remove, purge, or schedule feeds.
+generic plugin settings UI. GUI feed rows use `Category | Name | URL`; legacy
+`Name | URL` rows become `Uncategorized`, and the existing object YAML form
+remains compatible with an optional `category`. The plugin-owned News view
+filters sources and stored articles by category and can explicitly refresh one
+selected category. The agent cannot add, edit, remove, purge, or schedule feeds.
 
 ## Storage lifecycle
 

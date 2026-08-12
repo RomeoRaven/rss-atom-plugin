@@ -1,6 +1,6 @@
 id: rss_atom
 name: RSS / Atom Intake
-version: 0.2.0
+version: 0.3.0
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.
@@ -17,7 +17,7 @@ settings:
   - key: feeds
     label: Feeds
     type: string_list
-    description: "One feed per row: Name | https://example.com/feed.xml"
+    description: "One feed per row: Category | Name | https://example.com/feed.xml (legacy Name | URL rows become Uncategorized)"
   - key: max_items_per_refresh
     label: Items processed per refresh
     type: number
@@ -55,5 +55,7 @@ capabilities:
   network:
     - configured RSS/Atom feed hosts
   filesystem: scoped
+views:
+  - { id: news, label: "News", icon: "Newspaper", path: "/plugins/rss_atom/view" }
 emits: []
 subscribes: []
