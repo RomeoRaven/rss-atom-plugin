@@ -11,8 +11,10 @@ query recent entries and refresh status.
 2. Add one feed per row as `Category | Name | URL`.
 3. Open **News** from the left rail and choose a category.
 4. Click a feed name to show only that source's stored articles.
-5. Use the adjacent eye to include or skip that source for **Refresh selected**.
-6. Click **Refresh selected** only when you want to fetch the included feeds.
+5. Use the eye to include or skip that source for bulk **Refresh selected**.
+6. Use the adjacent refresh icon to fetch only that source immediately.
+7. Click **Refresh selected** only when you want to fetch every included feed in
+   the category.
 
 Adding a row configures a source; it does not add or refresh articles by itself.
 Removing a row stops it appearing in News but does not purge previously stored
@@ -36,10 +38,11 @@ Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/rele
 Existing `Name | URL` rows remain valid and appear under **Uncategorized**.
 Enabled plugins also contribute a **News** rail view. Its category selector
 filters configured sources and stored articles. Within a category, **All feeds**
-or a feed-name button filters stored results by source. The adjacent eye button
-independently includes or skips that feed for **Refresh selected**; crossed-out
-eyes are skipped. Those refresh choices persist in that browser and never delete
-or alter configured feeds. Refresh remains explicit and operator-triggered.
+or a feed-name button filters stored results by source. The eye button independently
+includes or skips that feed for bulk **Refresh selected**; crossed-out eyes are
+skipped. The separate refresh icon refreshes only that source, regardless of its
+eye state. Those bulk-refresh choices persist in that browser and never delete or
+alter configured feeds. Every refresh remains explicit and operator-triggered.
 
 ## Optional feed ideas
 

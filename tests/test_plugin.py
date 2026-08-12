@@ -343,10 +343,18 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
     assert "grid-template-columns: minmax(0, 1fr)" in view.text
     assert ".rail, .main { width: 100%; min-width: 0; }" in view.text
     assert 'data-source="all"' in view.text
-    assert "data-refresh-toggle" in view.text
+    assert "data-skip-toggle" in view.text
+    assert "data-feed-refresh" in view.text
+    obsolete_toggle = "data-" + "refresh" + "-toggle"
+    assert obsolete_toggle not in view.text
+    assert 'class="category-name"' in view.text
+    assert ".category { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr);" in view.text
+    assert "async function refreshFeeds(feedUrls, label)" in view.text
+    assert "refreshFeeds([button.dataset.url], button.dataset.name)" in view.text
     assert 'aria-label="Filter articles by source"' in view.text
     assert "rss_atom.skipped_feed_urls" in view.text
-    assert "feed_urls: includedFeeds" in view.text
+    assert "feed_urls: feedUrls" in view.text
+    assert "refreshFeeds(includedFeeds, state.category)" in view.text
     data = client.get("/api/plugins/rss_atom/news", params={"category": "Technology"})
     assert data.status_code == 200
     assert data.json()["categories"] == [
