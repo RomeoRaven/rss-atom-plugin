@@ -21,8 +21,10 @@ The complete first-slice interface is four tools:
 3. query bounded recent entries, optionally by feed;
 4. report the latest refresh status for one feed.
 
-Configured sources are operator input. The agent cannot add, edit, remove, purge,
-or schedule them.
+Configured sources and intake bounds are operator input through protoAgent's
+generic plugin settings UI. GUI feed rows use `Name | URL`; the existing
+`{name, url}` YAML object form remains compatible. The agent cannot add, edit,
+remove, purge, or schedule feeds.
 
 ## Storage lifecycle
 
@@ -43,7 +45,8 @@ migration beyond initial idempotent creation are not admitted in this slice.
 - validators are removed on cross-origin redirects;
 - no credentials or arbitrary headers are accepted;
 - timeout is a 1–60 second total refresh deadline across redirect hops;
-- decompressed response body is 1 KiB–2 MiB;
+- decompressed response body is user-configurable from 1 KiB–2 MiB;
+- each refresh processes a user-configurable 1–1000 newest entries;
 - non-2xx except 304 fails closed; retry/background pacing is not automatic;
 - `feedparser` bozo/malformed results are rejected completely;
 - untrusted HTML becomes bounded plain text in tool results.

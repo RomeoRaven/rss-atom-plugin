@@ -175,6 +175,27 @@ def test_successful_refresh_caps_stored_entries_per_feed(tmp_path: Path):
     assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
 
 
+def test_successful_refresh_limits_items_processed_before_retention(tmp_path: Path):
+    url = "https://feeds.example/capped-refresh"
+    body = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Capped</title>
+    <item><guid>one</guid><title>One</title></item>
+    <item><guid>two</guid><title>Two</title></item>
+    <item><guid>three</guid><title>Three</title></item>
+    </channel></rss>"""
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(200, {}, body)]}),
+        check_url=allow_public,
+        max_items_per_refresh=2,
+        max_entries_per_feed=10,
+    )
+
+    result = intake.refresh(url)
+
+    assert result["inserted"] == 2
+    assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
+
+
 def test_shared_database_path_serializes_refreshes_across_instances(tmp_path: Path):
     url = "https://feeds.example/concurrent"
 

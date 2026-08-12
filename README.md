@@ -12,14 +12,32 @@ query recent entries and refresh status.
 - `rss_recent_entries(limit=20, name="")`
 - `rss_feed_status(name)`
 
-Feeds are operator configuration, not agent-mutable state:
+Feeds and bounded intake settings are operator configuration, not agent-mutable
+state. In protoAgent, open **Plugins → RSS / Atom Intake → Configure**. Add one
+feed per row using `Name | URL`, for example:
+
+```text
+protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom
+```
+
+The generic plugin settings dialog also controls:
+
+- items processed from each fetched document (1–1000; default 100);
+- recent items returned when no tool limit is supplied (1–100; default 20);
+- durable entries retained per feed (1–10000; default 1000);
+- maximum decompressed feed size in KiB (1–2048; default 256);
+- total refresh timeout in seconds (1–60; default 15).
+
+The object form remains accepted for existing config files:
 
 ```yaml
 rss_atom:
   feeds:
     - name: Example
       url: https://example.com/feed.xml
-  max_bytes: 262144
+  max_items_per_refresh: 100
+  default_recent_items: 20
+  max_feed_size_kib: 256
   timeout_seconds: 15
   max_entries_per_feed: 1000
 plugins:

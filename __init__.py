@@ -43,10 +43,15 @@ def _feeds() -> list[dict[str, str]]:
     names: set[str] = set()
     urls: set[str] = set()
     for item in raw:
-        if not isinstance(item, dict):
-            raise ValueError("each configured feed must be an object")
-        name = str(item.get("name") or "").strip()
-        url = str(item.get("url") or "").strip()
+        if isinstance(item, str):
+            if "|" not in item:
+                raise ValueError("each feed row must use: Name | URL")
+            name, url = (part.strip() for part in item.split("|", 1))
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            url = str(item.get("url") or "").strip()
+        else:
+            raise ValueError("each configured feed must use: Name | URL")
         if not name or not url:
             raise ValueError("each configured feed requires non-empty name and url")
         key = name.casefold()
@@ -69,11 +74,12 @@ def _feed(name: str) -> dict[str, str]:
 def _intake() -> FeedIntake:
     cfg = _config()
     try:
-        max_bytes = max(1024, min(int(cfg.get("max_bytes", 262144)), 2 * 1024 * 1024))
+        max_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
         timeout_seconds = max(1.0, min(float(cfg.get("timeout_seconds", 15)), 60.0))
         max_entries = max(1, min(int(cfg.get("max_entries_per_feed", 1000)), 10000))
+        max_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 1000))
     except (TypeError, ValueError) as exc:
-        raise ValueError("max_bytes and timeout_seconds must be numeric") from exc
+        raise ValueError("RSS/Atom numeric settings must contain valid numbers") from exc
     try:
         from security import egress
     except ImportError as exc:
@@ -86,9 +92,10 @@ def _intake() -> FeedIntake:
         _data_dir() / "feeds.db",
         _transport,
         check_url=egress_policy,
-        max_bytes=max_bytes,
+        max_bytes=max_feed_size_kib * 1024,
         timeout_seconds=timeout_seconds,
         max_entries_per_feed=max_entries,
+        max_items_per_refresh=max_items,
     )
 
 
@@ -120,10 +127,11 @@ def rss_refresh_feed(name: str) -> str:
 
 
 @tool
-def rss_recent_entries(limit: int = 20, name: str = "") -> str:
+def rss_recent_entries(limit: int | None = None, name: str = "") -> str:
     """Return recent normalized feed entries, optionally restricted to one configured feed."""
     try:
-        bounded = max(1, min(int(limit), 100))
+        configured_default = max(1, min(int(_config().get("default_recent_items", 20)), 100))
+        bounded = configured_default if limit is None else max(1, min(int(limit), 100))
         feed_url = _feed(name)["url"] if name.strip() else ""
         return _json(_intake().recent_entries(limit=bounded, feed_url=feed_url))
     except (TypeError, ValueError, RuntimeError) as exc:

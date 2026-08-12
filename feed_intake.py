@@ -293,6 +293,7 @@ class FeedIntake:
         max_bytes: int = 256 * 1024,
         timeout_seconds: float = 15.0,
         max_entries_per_feed: int = 1000,
+        max_items_per_refresh: int = 100,
     ) -> None:
         self.db_path = Path(db_path)
         self.transport = transport
@@ -304,6 +305,7 @@ class FeedIntake:
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self.max_entries_per_feed = max_entries_per_feed
+        self.max_items_per_refresh = max_items_per_refresh
         self._lock = _db_lock(self.db_path)
         self._init_db()
 
@@ -461,7 +463,7 @@ class FeedIntake:
             }
         if not 200 <= response.status < 300:
             raise FeedIntakeError(f"feed request failed with HTTP {response.status}")
-        normalized = self._normalize(feed_url, response.body)
+        normalized = self._normalize(feed_url, response.body)[: self.max_items_per_refresh]
         inserted = 0
         duplicates = 0
         with self._connect() as db:
