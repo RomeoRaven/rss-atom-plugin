@@ -216,6 +216,32 @@ def test_url_userinfo_is_rejected_before_egress_or_transport(tmp_path: Path):
     assert transport.calls == []
 
 
+def test_malformed_feed_url_records_safety_failure(tmp_path: Path):
+    transport = FixtureTransport({})
+    intake = FeedIntake(tmp_path / "feeds.db", transport, check_url=allow_public)
+    url = "https://[invalid/feed"
+
+    with pytest.raises(FeedSafetyError, match="malformed"):
+        intake.refresh(url)
+
+    assert transport.calls == []
+    assert intake.feed_status(url)["status"] == "error"
+
+
+def test_malformed_redirect_url_records_safety_failure(tmp_path: Path):
+    url = "https://feeds.example/start"
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(302, {"location": "https://target.example:invalid/feed"}, b"")]}),
+        check_url=allow_public,
+    )
+
+    with pytest.raises(FeedSafetyError, match="malformed"):
+        intake.refresh(url)
+
+    assert intake.feed_status(url)["status"] == "error"
+
+
 def test_http_transport_enforces_total_response_deadline():
     class SlowHandler(BaseHTTPRequestHandler):
         def do_GET(self):

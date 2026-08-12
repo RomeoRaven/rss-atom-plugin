@@ -212,18 +212,17 @@ class FeedIntake:
             headers["If-Modified-Since"] = row["last_modified"]
         return headers
 
-    @staticmethod
-    def _origin(url: str) -> tuple[str, str | None, int | None]:
-        parts = urlsplit(url)
-        return parts.scheme.lower(), parts.hostname, parts.port
-
     def _fetch(self, feed_url: str, headers: dict[str, str]) -> tuple[Response, int]:
         current = feed_url
         request_headers = dict(headers)
         redirects = 0
         deadline = time.monotonic() + self.timeout_seconds
         while True:
-            parts = urlsplit(current)
+            try:
+                parts = urlsplit(current)
+                current_port = parts.port
+            except ValueError as exc:
+                raise FeedSafetyError("malformed feed URL") from exc
             if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
                 raise FeedSafetyError("feed URL must use HTTP or HTTPS and include a host")
             if parts.username is not None or parts.password is not None:
@@ -262,9 +261,16 @@ class FeedIntake:
             if redirects > 3:
                 raise FeedSafetyError("too many feed redirects")
             target = urljoin(current, location)
-            if urlsplit(current).scheme.lower() == "https" and urlsplit(target).scheme.lower() != "https":
+            try:
+                target_parts = urlsplit(target)
+                target_port = target_parts.port
+            except ValueError as exc:
+                raise FeedSafetyError("malformed redirect URL") from exc
+            if parts.scheme.lower() == "https" and target_parts.scheme.lower() != "https":
                 raise FeedSafetyError("HTTPS downgrade redirect refused")
-            if self._origin(current) != self._origin(target):
+            current_origin = (parts.scheme.lower(), parts.hostname, current_port)
+            target_origin = (target_parts.scheme.lower(), target_parts.hostname, target_port)
+            if current_origin != target_origin:
                 request_headers = {
                     key: value
                     for key, value in request_headers.items()
