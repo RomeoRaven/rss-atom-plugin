@@ -409,6 +409,66 @@ def test_http_transport_maps_worker_launch_failure(monkeypatch):
         )
 
 
+@pytest.mark.parametrize(
+    "worker_stdout",
+    [
+        "[" * 1100 + "]" * 1100,
+        "1" * 5000,
+    ],
+)
+def test_http_transport_contains_pathological_worker_json(monkeypatch, worker_stdout):
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, payload=None, timeout=None):
+            return worker_stdout, ""
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    with pytest.raises(FeedIntakeError, match="worker returned invalid data"):
+        HttpxTransport().request(
+            "https://feeds.example/rss",
+            {},
+            timeout_seconds=1,
+            max_bytes=1024,
+        )
+
+
+def test_http_transport_does_not_expose_worker_error_detail(monkeypatch):
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, payload=None, timeout=None):
+            return '{"ok":false,"error":"httpx:SECRET_WORKER_DETAIL"}', ""
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    with pytest.raises(FeedIntakeError) as raised:
+        HttpxTransport().request(
+            "https://feeds.example/rss",
+            {},
+            timeout_seconds=1,
+            max_bytes=1024,
+        )
+    assert str(raised.value) == "feed request worker returned invalid data"
+    assert "SECRET" not in str(raised.value)
+
+
+def test_http_transport_maps_real_http_failure_to_fixed_error():
+    with pytest.raises(FeedIntakeError) as raised:
+        HttpxTransport().request(
+            "http://127.0.0.1:1/feed",
+            {},
+            timeout_seconds=1,
+            max_bytes=1024,
+        )
+    assert str(raised.value) == "feed request failed"
+
+
 def test_egress_check_is_bounded_by_refresh_deadline(tmp_path: Path, monkeypatch):
     url = "https://feeds.example/rss"
     transport = FixtureTransport({})

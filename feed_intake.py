@@ -126,7 +126,7 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
         )
         try:
             result = json.loads(stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
+        except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
             raise FeedIntakeError("feed egress worker returned invalid data") from exc
         if not isinstance(result, dict) or result.get("ok") is not True:
             raise FeedIntakeError("feed egress worker returned invalid data")
@@ -167,10 +167,10 @@ try:
             }
 except RuntimeError as exc:
     result = {"ok": False, "error": str(exc)}
-except httpx.HTTPError as exc:
-    result = {"ok": False, "error": "httpx:" + type(exc).__name__}
-except BaseException as exc:
-    result = {"ok": False, "error": "internal:" + type(exc).__name__}
+except httpx.HTTPError:
+    result = {"ok": False, "error": "httpx"}
+except BaseException:
+    result = {"ok": False, "error": "internal"}
 sys.stdout.write(json.dumps(result, separators=(",", ":")))
 """
 
@@ -192,7 +192,7 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
         )
         try:
             result = json.loads(stdout)
-        except (json.JSONDecodeError, TypeError) as exc:
+        except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
             raise FeedIntakeError("feed request worker returned invalid data") from exc
         if not isinstance(result, dict) or type(result.get("ok")) is not bool:
             raise FeedIntakeError("feed request worker returned invalid data")
@@ -204,9 +204,11 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
                 raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
             if error == "invalid_content_length":
                 raise FeedIntakeError("invalid Content-Length")
-            if error.startswith("httpx:"):
-                raise FeedIntakeError(f"feed request failed: {error.removeprefix('httpx:')}")
-            raise FeedIntakeError("feed request worker failed")
+            if error == "httpx":
+                raise FeedIntakeError("feed request failed")
+            if error == "internal":
+                raise FeedIntakeError("feed request worker failed")
+            raise FeedIntakeError("feed request worker returned invalid data")
         try:
             encoded_body = result["body"]
             status = result["status"]
