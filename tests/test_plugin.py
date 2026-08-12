@@ -85,7 +85,11 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
     manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
     assert manifest["id"] == "rss_atom"
     assert manifest["enabled"] is False
-    assert manifest["requires_pip"] == ["feedparser>=6.0.14,<7", "httpx>=0.27,<1"]
+    assert manifest["requires_pip"] == [
+        "feedparser>=6.0.14,<7",
+        "httpx>=0.27,<1",
+        "markdown-it-py>=3,<5",
+    ]
     assert manifest["capabilities"] == {"network": ["configured RSS/Atom feed hosts"], "filesystem": "scoped"}
     settings = {item["key"]: item for item in manifest["settings"]}
     assert list(settings) == [
@@ -105,6 +109,105 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
     source = (PLUGIN_ROOT / "__init__.py").read_text()
     assert "register_surface" not in source
     assert "schedule_recurring" not in source
+
+
+def test_bundled_readme_is_exposed_as_the_manifest_help_page(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Fixture News | https://feeds.example/rss"],
+    )
+    manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
+
+    assert manifest["guide_url"] == "/plugins/rss_atom/help"
+    assert manifest["public_paths"] == ["/plugins/rss_atom/help"]
+    rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
+    app = FastAPI()
+    for router in rss_routers:
+        app.include_router(router["router"], prefix=router["prefix"])
+
+    response = TestClient(app).get("/plugins/rss_atom/help")
+
+    assert response.status_code == 200
+    assert "<title>RSS / Atom Intake help</title>" in response.text
+    assert "<h1>RSS / Atom Intake for protoAgent</h1>" in response.text
+    assert "maximum decompressed feed size" in response.text
+
+
+def test_bundled_readme_help_is_safe_offline_and_linked_from_news(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Fixture News | https://feeds.example/rss"],
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    assert loaded_module.__file__ is not None
+    readme = Path(loaded_module.__file__).with_name("README.md")
+    original = readme.read_text(encoding="utf-8")
+    readme.write_text(
+        original
+        + "\n\n## Safety fixture\n\n[Example](https://example.com/docs)\n\n"
+        + '<script id="readme-script">window.README_EXECUTED = true</script>\n',
+        encoding="utf-8",
+    )
+    rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
+    app = FastAPI()
+    for router in rss_routers:
+        app.include_router(router["router"], prefix=router["prefix"])
+    client = TestClient(app)
+
+    help_page = client.get("/plugins/rss_atom/help")
+    news_page = client.get("/plugins/rss_atom/view")
+
+    assert help_page.status_code == 200
+    assert "plugin-kit.css" in help_page.text
+    assert ".markdown code{color:#eef1f5" in help_page.text
+    assert 'href="https://example.com/docs" target="_blank" rel="noopener noreferrer"' in help_page.text
+    assert '<script id="readme-script">' not in help_page.text
+    assert "&lt;script id=&quot;readme-script&quot;&gt;" in help_page.text
+    assert 'href="/plugins/rss_atom/help"' in news_page.text
+
+
+def test_bundled_readme_help_contains_copyable_optional_feed_guidance(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Fixture News | https://feeds.example/rss"],
+    )
+    rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
+    app = FastAPI()
+    for router in rss_routers:
+        app.include_router(router["router"], prefix=router["prefix"])
+
+    response = TestClient(app).get("/plugins/rss_atom/help")
+
+    assert response.status_code == 200
+    assert "Quick start" in response.text
+    assert "Optional feed ideas" in response.text
+    assert "Google Developers" in response.text
+    assert "CDC Emerging Infectious Diseases" in response.text
+    assert "does not add or refresh" in response.text
+    assert "Troubleshooting" in response.text
+
+
+def test_bundled_readme_help_reports_missing_source_cleanly(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Fixture News | https://feeds.example/rss"],
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    assert loaded_module.__file__ is not None
+    Path(loaded_module.__file__).with_name("README.md").unlink()
+    rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
+    app = FastAPI()
+    for router in rss_routers:
+        app.include_router(router["router"], prefix=router["prefix"])
+
+    response = TestClient(app).get("/plugins/rss_atom/help")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Plugin help is not bundled"}
 
 
 def test_gui_feed_rows_are_normalized_and_default_recent_limit_is_configurable(tmp_path, monkeypatch):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from langchain_core.tools import tool
+from markdown_it import MarkdownIt
 
 if __package__:
     from .feed_intake import FeedIntake, FeedIntakeError, HttpxTransport, ProtoAgentEgressPolicy
@@ -23,6 +25,22 @@ def _empty_config() -> dict[str, Any]:
 
 _config_provider: Callable[[], dict[str, Any]] = _empty_config
 _transport = HttpxTransport()
+_markdown: Any = MarkdownIt("commonmark", {"html": False})
+
+
+def _help_link_open(tokens, index, options, env):
+    token = tokens[index]
+    href = token.attrGet("href") or ""
+    scheme = urlparse(href).scheme.lower()
+    if scheme in {"http", "https"}:
+        token.attrSet("target", "_blank")
+        token.attrSet("rel", "noopener noreferrer")
+    elif scheme and scheme != "mailto":
+        token.attrSet("href", "#")
+    return _markdown.renderer.renderToken(tokens, index, options, env)
+
+
+_markdown.renderer.rules["link_open"] = _help_link_open
 
 
 def _data_dir() -> Path:
@@ -190,7 +208,7 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
 
 
 def _view_router():
-    from fastapi import APIRouter
+    from fastapi import APIRouter, HTTPException
     from fastapi.responses import HTMLResponse
 
     router = APIRouter()
@@ -198,6 +216,38 @@ def _view_router():
     @router.get("/view")
     async def _view():
         return HTMLResponse(Path(__file__).with_name("news_view.html").read_text(encoding="utf-8"))
+
+    @router.get("/help")
+    async def _help():
+        try:
+            readme = Path(__file__).with_name("README.md").read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise HTTPException(status_code=404, detail="Plugin help is not bundled") from exc
+        rendered = _markdown.render(readme)
+        title = "RSS / Atom Intake help"
+        return HTMLResponse(
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+            f"<title>{html.escape(title)}</title>"
+            '<script>window.__base=location.pathname.split("/plugins/")[0];'
+            "const kitCss=document.createElement('link');kitCss.rel='stylesheet';"
+            "kitCss.href=window.__base+'/_ds/plugin-kit.css';document.head.appendChild(kitCss);</script>"
+            "<style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;"
+            "background:var(--pl-color-bg,#0b0e12);color:var(--pl-color-fg,#eef1f5);"
+            "font:15px/1.65 ui-sans-serif,system-ui,sans-serif}.help-shell{width:min(860px,100%);margin:0 auto;"
+            "padding:clamp(24px,5vw,58px) clamp(18px,5vw,52px) 72px}.help-nav{display:flex;justify-content:space-between;"
+            "align-items:center;gap:16px;padding-bottom:18px;border-bottom:1px solid var(--pl-color-border,#29313a)}"
+            ".help-nav a,a{color:var(--pl-color-brand,#9f8cff)}.markdown h1{font-size:clamp(28px,5vw,42px);line-height:1.1;"
+            "letter-spacing:-.035em}.markdown h2{margin-top:2em;padding-top:.5em;border-top:1px solid var(--pl-color-border,#29313a)}"
+            ".markdown h3{margin-top:1.7em}.markdown p,.markdown li{max-width:78ch}.markdown code{color:#eef1f5;font:13px/1.5 ui-monospace,SFMono-Regular,monospace;"
+            "background:var(--pl-color-bg-panel,#151b22);padding:2px 5px;border-radius:4px}.markdown pre{overflow:auto;"
+            "padding:14px;border:1px solid var(--pl-color-border,#29313a);border-radius:8px;background:var(--pl-color-bg-panel,#11161c)}"
+            ".markdown pre code{padding:0;background:transparent}.markdown blockquote{margin-left:0;padding-left:16px;border-left:3px solid var(--pl-color-brand,#8b72ff);"
+            "color:var(--pl-color-fg-muted,#a8b0ba)}@media(max-width:540px){.help-nav{align-items:flex-start;flex-direction:column}}"
+            f'</style></head><body><main class="help-shell"><nav class="help-nav" aria-label="Plugin help">'
+            '<strong>RSS / Atom Intake</strong><a href="/plugins/rss_atom/view">Back to News</a></nav>'
+            f'<article class="markdown">{rendered}</article></main></body></html>'
+        )
 
     return router
 

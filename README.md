@@ -5,6 +5,19 @@ It safely refreshes one named feed on demand, normalizes entries with source
 provenance, persists HTTP validators and deduplication state, and lets the agent
 query recent entries and refresh status.
 
+## Quick start
+
+1. Open **Plugins → RSS / Atom Intake → Configure**.
+2. Add one feed per row as `Category | Name | URL`.
+3. Open **News** from the left rail and choose a category.
+4. Click a feed name to show only that source's stored articles.
+5. Use the adjacent eye to include or skip that source for **Refresh selected**.
+6. Click **Refresh selected** only when you want to fetch the included feeds.
+
+Adding a row configures a source; it does not add or refresh articles by itself.
+Removing a row stops it appearing in News but does not purge previously stored
+entries from the plugin database.
+
 ## Tools
 
 - `rss_list_feeds(category="")`
@@ -28,6 +41,20 @@ independently includes or skips that feed for **Refresh selected**; crossed-out
 eyes are skipped. Those refresh choices persist in that browser and never delete
 or alter configured feeds. Refresh remains explicit and operator-triggered.
 
+## Optional feed ideas
+
+These examples are not installed automatically. Copy only the rows you want into
+the **Feeds** setting, then use News to refresh them explicitly.
+
+```text
+Developer | Google Developers | https://developers.googleblog.com/feeds/posts/default?alt=rss
+Science | CDC Emerging Infectious Diseases | https://wwwnc.cdc.gov/eid/rss/ahead-of-print.xml
+```
+
+Feed payloads and server behavior can change. If an example later fails, check
+the source's official feed page and the troubleshooting section below before
+raising intake limits.
+
 The generic plugin settings dialog also controls:
 
 - items processed from each fetched document (1–1000; default 100);
@@ -35,6 +62,12 @@ The generic plugin settings dialog also controls:
 - durable entries retained per feed (1–10000; default 1000);
 - maximum decompressed feed size in KiB (1–2048; default 256);
 - total refresh timeout in seconds (1–60; default 15).
+
+The size setting applies to one decompressed RSS/Atom response, not to the plugin
+package, configured-feed count, category size, or durable database. The fetcher
+checks a declared response size when available and otherwise stops streaming as
+soon as the configured ceiling is crossed. Increase it only for a trusted feed
+whose current payload genuinely requires more room.
 
 The object form remains accepted for existing config files:
 
@@ -68,6 +101,29 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 - Refreshes are operator-triggered and serialized in-process.
 - Disable stops all activity because there is no background process.
 - Disable/uninstall retains the SQLite data. No purge tool exists in this slice.
+
+## Troubleshooting
+
+### Feed exceeds the configured size limit
+
+Confirm that the URL is an RSS/Atom document rather than a full web page. If it
+is a trusted feed and its decompressed XML is legitimately larger than the
+current ceiling, raise **Maximum feed size (KiB)** conservatively in Configure.
+The accepted range is 1–2048 KiB.
+
+### Feed request is blocked or fails
+
+The plugin applies protoAgent's egress policy to the original URL and every
+redirect. A source may also reject automated readers, return a challenge page,
+redirect from HTTPS to HTTP, or exceed the total timeout. The error is recorded
+for that feed; no partial entries are committed.
+
+### Refresh succeeds but no articles appear
+
+Check that the feed actually contains entries, that the source's eye is included,
+and that the selected category/source filter is not hiding stored results. A
+successful refresh can insert zero articles when every returned item is already
+stored.
 
 ## Non-goals
 
