@@ -4,6 +4,8 @@ version: 0.7.0
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.
+repository: https://github.com/RomeoRaven/rss-atom-plugin
+homepage: https://agent.protolabs.studio
 enabled: false
 config_section: rss_atom
 guide_url: /plugins/rss_atom/help
@@ -52,9 +54,9 @@ settings:
     maximum: 60
     description: "Total deadline for validation, redirects, download, and parsing of one feed refresh."
 requires_pip:
-  - feedparser>=6.0.14,<7
-  - httpx>=0.27,<1
-  - markdown-it-py>=3,<5
+  - { pkg: "feedparser>=6.0.14,<7", scope: host }
+  - { pkg: "httpx>=0.27,<1", scope: host }
+  - { pkg: "markdown-it-py>=3,<5", scope: host }
 capabilities:
   network:
     - configured RSS/Atom feed hosts

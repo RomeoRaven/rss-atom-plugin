@@ -94,10 +94,12 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
     manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
     assert manifest["id"] == "rss_atom"
     assert manifest["enabled"] is False
+    assert manifest["repository"] == "https://github.com/RomeoRaven/rss-atom-plugin"
+    assert manifest["homepage"] == "https://agent.protolabs.studio"
     assert manifest["requires_pip"] == [
-        "feedparser>=6.0.14,<7",
-        "httpx>=0.27,<1",
-        "markdown-it-py>=3,<5",
+        {"pkg": "feedparser>=6.0.14,<7", "scope": "host"},
+        {"pkg": "httpx>=0.27,<1", "scope": "host"},
+        {"pkg": "markdown-it-py>=3,<5", "scope": "host"},
     ]
     assert manifest["capabilities"] == {"network": ["configured RSS/Atom feed hosts"], "filesystem": "scoped"}
     settings = {item["key"]: item for item in manifest["settings"]}
@@ -578,6 +580,12 @@ def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monk
 
     assert payload["status"] == "invalid_configuration"
     assert "Name | URL" in payload["error"]
+
+
+def test_repository_declares_mit_license():
+    license_text = (PLUGIN_ROOT / "LICENSE").read_text()
+    assert license_text.startswith("MIT License\n")
+    assert "Copyright (c) 2026 RomeoRaven" in license_text
 
 
 def test_refresh_tool_bounds_agent_visible_egress_error(tmp_path, monkeypatch):
