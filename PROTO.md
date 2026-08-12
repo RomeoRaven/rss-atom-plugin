@@ -25,8 +25,10 @@ Configured sources and intake bounds are operator input through protoAgent's
 generic plugin settings UI. GUI feed rows use `Category | Name | URL`; legacy
 `Name | URL` rows become `Uncategorized`, and the existing object YAML form
 remains compatible with an optional `category`. The plugin-owned News view
-filters sources and stored articles by category and can explicitly refresh one
-selected category. The agent cannot add, edit, remove, purge, or schedule feeds.
+filters stored articles by category and source. A separate browser-persisted eye
+toggle includes or skips each configured category feed for an explicit selected-
+feed refresh; the server rejects empty, duplicate, unknown, or cross-category
+refresh selections. The agent cannot add, edit, remove, purge, or schedule feeds.
 
 ## Storage lifecycle
 

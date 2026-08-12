@@ -22,8 +22,11 @@ Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/rele
 
 Existing `Name | URL` rows remain valid and appear under **Uncategorized**.
 Enabled plugins also contribute a **News** rail view. Its category selector
-filters configured sources and stored articles, and its **Refresh category**
-button performs an explicit operator-triggered refresh of only that category.
+filters configured sources and stored articles. Within a category, **All feeds**
+or a feed-name button filters stored results by source. The adjacent eye button
+independently includes or skips that feed for **Refresh selected**; crossed-out
+eyes are skipped. Those refresh choices persist in that browser and never delete
+or alter configured feeds. Refresh remains explicit and operator-triggered.
 
 The generic plugin settings dialog also controls:
 

@@ -1,6 +1,6 @@
 id: rss_atom
 name: RSS / Atom Intake
-version: 0.3.0
+version: 0.4.0
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.

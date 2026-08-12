@@ -136,12 +136,22 @@ def _category_names() -> list[str]:
     return sorted({feed["category"] for feed in _feeds()}, key=str.casefold)
 
 
-def _news_payload(category: str = "") -> dict[str, Any]:
+def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
     categories = _category_names()
     if not categories:
         return {"selected_category": "", "categories": [], "feeds": [], "entries": []}
     selected = category.strip() or categories[0]
     selected_feeds = _category_feeds(selected)
+    selected_source = source.strip()
+    source_feed = None
+    if selected_source:
+        source_feed = next(
+            (feed for feed in selected_feeds if feed["name"].casefold() == selected_source.casefold()),
+            None,
+        )
+        if source_feed is None:
+            raise ValueError(f"unknown feed {source!r} in configured category {selected!r}")
+        selected_source = source_feed["name"]
     intake = _intake()
     configured_default = max(1, min(int(_config().get("default_recent_items", 20)), 100))
     category_rows = []
@@ -151,10 +161,13 @@ def _news_payload(category: str = "") -> dict[str, Any]:
         category_rows.append(
             {"name": name, "feed_count": len(feeds), "entry_count": intake.count_entries(feed_urls=urls)}
         )
-    entries = intake.recent_entries(
-        limit=configured_default,
-        feed_urls=[feed["url"] for feed in selected_feeds],
-    )
+    if source_feed:
+        entries = intake.recent_entries(limit=configured_default, feed_url=source_feed["url"])
+    else:
+        entries = intake.recent_entries(
+            limit=configured_default,
+            feed_urls=[feed["url"] for feed in selected_feeds],
+        )
     feed_by_url = {feed["url"]: feed for feed in selected_feeds}
     enriched = []
     for entry in entries:
@@ -169,6 +182,7 @@ def _news_payload(category: str = "") -> dict[str, Any]:
         )
     return {
         "selected_category": selected_feeds[0]["category"],
+        "selected_source": selected_source,
         "categories": category_rows,
         "feeds": selected_feeds,
         "entries": enriched,
@@ -194,9 +208,9 @@ def _data_router():
     router = APIRouter()
 
     @router.get("/news")
-    async def _news(category: str = ""):
+    async def _news(category: str = "", source: str = ""):
         try:
-            return await asyncio.to_thread(_news_payload, category)
+            return await asyncio.to_thread(_news_payload, category, source)
         except (TypeError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
 
@@ -205,6 +219,17 @@ def _data_router():
         category = str(payload.get("category") or "").strip()
         try:
             feeds = _category_feeds(category)
+            if "feed_urls" in payload:
+                requested = payload["feed_urls"]
+                if not isinstance(requested, list) or not requested:
+                    raise ValueError("select at least one configured feed to refresh")
+                requested_urls = [str(url).strip() for url in requested]
+                if any(not url for url in requested_urls) or len(set(requested_urls)) != len(requested_urls):
+                    raise ValueError("refresh feed URLs must be non-empty and unique")
+                by_url = {feed["url"]: feed for feed in feeds}
+                if any(url not in by_url for url in requested_urls):
+                    raise ValueError("refresh selection contains a feed outside the configured category")
+                feeds = [by_url[url] for url in requested_urls]
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
         results = []
@@ -216,6 +241,7 @@ def _data_router():
                 results.append({"name": feed["name"], "status": "error", "error": _public_error(exc)})
         return {
             "category": feeds[0]["category"],
+            "requested": len(feeds),
             "refreshed": len(feeds),
             "inserted": sum(int(result.get("inserted", 0)) for result in results),
             "failed": sum(result.get("status") == "error" for result in results),

@@ -207,12 +207,15 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
 
         def recent_entries(self, *, limit, feed_url="", feed_urls=None):
             assert limit == 7
-            assert feed_url == ""
-            assert feed_urls == ["https://feeds.example/rss", "https://more.example/rss"]
+            if feed_url:
+                assert feed_url == "https://more.example/rss"
+                assert feed_urls is None
+            else:
+                assert feed_urls == ["https://feeds.example/rss", "https://more.example/rss"]
             return [
                 {
                     "entry_id": "story-1",
-                    "feed_url": "https://feeds.example/rss",
+                    "feed_url": feed_url or "https://feeds.example/rss",
                     "title": "A useful headline",
                     "link": "javascript:alert(1)",
                     "published": "2026-08-12T12:00:00+00:00",
@@ -236,6 +239,11 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
     assert "plugin-kit.css" in view.text
     assert "grid-template-columns: minmax(0, 1fr)" in view.text
     assert ".rail, .main { width: 100%; min-width: 0; }" in view.text
+    assert 'data-source="all"' in view.text
+    assert "data-refresh-toggle" in view.text
+    assert 'aria-label="Filter articles by source"' in view.text
+    assert "rss_atom.skipped_feed_urls" in view.text
+    assert "feed_urls: includedFeeds" in view.text
     data = client.get("/api/plugins/rss_atom/news", params={"category": "Technology"})
     assert data.status_code == 200
     assert data.json()["categories"] == [
@@ -245,9 +253,39 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
     assert data.json()["entries"][0]["source"] == "Fixture News"
     assert data.json()["entries"][0]["category"] == "Technology"
     assert data.json()["entries"][0]["link"] == ""
+    filtered = client.get(
+        "/api/plugins/rss_atom/news",
+        params={"category": "Technology", "source": "More Tech"},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["selected_source"] == "More Tech"
+    assert filtered.json()["entries"][0]["source"] == "More Tech"
+    invalid_source = client.get(
+        "/api/plugins/rss_atom/news",
+        params={"category": "Technology", "source": "Updates"},
+    )
+    assert invalid_source.status_code == 400
     refresh = client.post("/api/plugins/rss_atom/refresh-category", json={"category": "Technology"})
     assert refresh.status_code == 200
     assert refreshed == ["https://feeds.example/rss", "https://more.example/rss"]
+    refreshed.clear()
+    subset = client.post(
+        "/api/plugins/rss_atom/refresh-category",
+        json={"category": "Technology", "feed_urls": ["https://more.example/rss"]},
+    )
+    assert subset.status_code == 200
+    assert subset.json()["requested"] == 1
+    assert refreshed == ["https://more.example/rss"]
+    outside = client.post(
+        "/api/plugins/rss_atom/refresh-category",
+        json={"category": "Technology", "feed_urls": ["https://updates.example/atom"]},
+    )
+    assert outside.status_code == 400
+    empty = client.post(
+        "/api/plugins/rss_atom/refresh-category",
+        json={"category": "Technology", "feed_urls": []},
+    )
+    assert empty.status_code == 400
 
 
 def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monkeypatch):
