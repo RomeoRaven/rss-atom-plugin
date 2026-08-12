@@ -57,3 +57,7 @@ runs the parser/storage/security tests. No live external feed is polled.
 
 This repository is an implementation candidate, not a release. Installation,
 live feed configuration, deployment, and publishing remain separate decisions.
+
+## License
+
+[MIT](LICENSE)
