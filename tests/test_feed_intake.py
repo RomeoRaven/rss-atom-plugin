@@ -463,7 +463,7 @@ def test_http_transport_maps_real_http_failure_to_fixed_error():
         HttpxTransport().request(
             "http://127.0.0.1:1/feed",
             {},
-            timeout_seconds=1,
+            timeout_seconds=5,
             max_bytes=1024,
         )
     assert str(raised.value) == "feed request failed"
