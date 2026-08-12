@@ -55,30 +55,60 @@ def _config() -> dict[str, Any]:
     return dict(_config_provider() or {})
 
 
-def _feeds() -> list[dict[str, str]]:
+def _feed_override(value: Any, *, label: str, maximum: int) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"feed {label} must be a whole number") from exc
+    if not 1 <= parsed <= maximum:
+        raise ValueError(f"feed {label} must be 1 through {maximum}")
+    return parsed
+
+
+def _feeds() -> list[dict[str, Any]]:
     raw = _config().get("feeds", [])
     if not isinstance(raw, list):
         raise ValueError("rss_atom.feeds must be a list")
-    feeds: list[dict[str, str]] = []
+    feeds: list[dict[str, Any]] = []
     names: set[str] = set()
     urls: set[str] = set()
     for item in raw:
         if isinstance(item, str):
             if "|" not in item:
-                raise ValueError("each feed row must use: Category | Name | URL or Name | URL")
+                raise ValueError(
+                    "each feed row must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
+                )
             parts = [part.strip() for part in item.split("|")]
             if len(parts) == 2:
                 category, name, url = "Uncategorized", *parts
+                max_feed_size_kib = max_items_per_refresh = None
             elif len(parts) == 3:
                 category, name, url = parts
+                max_feed_size_kib = max_items_per_refresh = None
+            elif len(parts) == 5:
+                category, name, url, raw_size, raw_items = parts
+                max_feed_size_kib = _feed_override(raw_size, label="size override in KiB", maximum=2048)
+                max_items_per_refresh = _feed_override(raw_items, label="items-per-refresh override", maximum=100)
             else:
-                raise ValueError("each feed row must use: Category | Name | URL or Name | URL")
+                raise ValueError(
+                    "each feed row must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
+                )
         elif isinstance(item, dict):
             category = str(item.get("category") or "Uncategorized").strip()
             name = str(item.get("name") or "").strip()
             url = str(item.get("url") or "").strip()
+            max_feed_size_kib = _feed_override(
+                item.get("max_feed_size_kib"), label="size override in KiB", maximum=2048
+            )
+            max_items_per_refresh = _feed_override(
+                item.get("max_items_per_refresh"), label="items-per-refresh override", maximum=100
+            )
         else:
-            raise ValueError("each configured feed must use: Category | Name | URL or Name | URL")
+            raise ValueError(
+                "each configured feed must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
+            )
         if not category or not name or not url:
             raise ValueError("each configured feed requires non-empty category, name, and url")
         key = name.casefold()
@@ -86,11 +116,16 @@ def _feeds() -> list[dict[str, str]]:
             raise ValueError("configured feed names and URLs must be unique")
         names.add(key)
         urls.add(url)
-        feeds.append({"category": category, "name": name, "url": url})
+        feed: dict[str, Any] = {"category": category, "name": name, "url": url}
+        if max_feed_size_kib is not None:
+            feed["max_feed_size_kib"] = max_feed_size_kib
+        if max_items_per_refresh is not None:
+            feed["max_items_per_refresh"] = max_items_per_refresh
+        feeds.append(feed)
     return sorted(feeds, key=lambda feed: (feed["category"].casefold(), feed["name"].casefold(), feed["url"]))
 
 
-def _category_feeds(category: str) -> list[dict[str, str]]:
+def _category_feeds(category: str) -> list[dict[str, Any]]:
     wanted = category.strip().casefold()
     matches = [feed for feed in _feeds() if feed["category"].casefold() == wanted]
     if wanted and not matches:
@@ -98,7 +133,7 @@ def _category_feeds(category: str) -> list[dict[str, str]]:
     return matches
 
 
-def _feed(name: str) -> dict[str, str]:
+def _feed(name: str) -> dict[str, Any]:
     wanted = name.strip().casefold()
     matches = [feed for feed in _feeds() if feed["name"].casefold() == wanted]
     if not matches:
@@ -106,15 +141,17 @@ def _feed(name: str) -> dict[str, str]:
     return matches[0]
 
 
-def _intake() -> FeedIntake:
+def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
     cfg = _config()
     try:
-        max_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
+        default_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
         timeout_seconds = max(1.0, min(float(cfg.get("timeout_seconds", 15)), 60.0))
         max_entries = max(1, min(int(cfg.get("max_entries_per_feed", 1000)), 10000))
-        max_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 1000))
+        default_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 100))
     except (TypeError, ValueError) as exc:
         raise ValueError("RSS/Atom numeric settings must contain valid numbers") from exc
+    max_feed_size_kib = int((feed or {}).get("max_feed_size_kib", default_feed_size_kib))
+    max_items = int((feed or {}).get("max_items_per_refresh", default_items))
     try:
         from security import egress
     except ImportError as exc:
@@ -171,6 +208,9 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
             raise ValueError(f"unknown feed {source!r} in configured category {selected!r}")
         selected_source = source_feed["name"]
     intake = _intake()
+    cfg = _config()
+    default_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
+    default_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 100))
     configured_default = max(1, min(int(_config().get("default_recent_items", 20)), 100))
     category_rows = []
     for name in categories:
@@ -185,6 +225,17 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
         entries = intake.recent_entries(
             limit=configured_default,
             feed_urls=[feed["url"] for feed in selected_feeds],
+        )
+    enriched_feeds = []
+    for feed in selected_feeds:
+        enriched_feeds.append(
+            {
+                **feed,
+                "effective_max_feed_size_kib": int(feed.get("max_feed_size_kib", default_feed_size_kib)),
+                "effective_max_items_per_refresh": int(feed.get("max_items_per_refresh", default_items)),
+                "stored_count": intake.count_entries(feed_urls=[feed["url"]]),
+                "health": intake.feed_status(feed["url"]),
+            }
         )
     feed_by_url = {feed["url"]: feed for feed in selected_feeds}
     enriched = []
@@ -202,7 +253,7 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
         "selected_category": selected_feeds[0]["category"],
         "selected_source": selected_source,
         "categories": category_rows,
-        "feeds": selected_feeds,
+        "feeds": enriched_feeds,
         "entries": enriched,
     }
 
@@ -285,7 +336,7 @@ def _data_router():
         results = []
         for feed in feeds:
             try:
-                result = await asyncio.to_thread(_intake().refresh, feed["url"])
+                result = await asyncio.to_thread(_intake(feed).refresh, feed["url"])
                 results.append({"name": feed["name"], **result})
             except (FeedIntakeError, RuntimeError) as exc:
                 results.append({"name": feed["name"], "status": "error", "error": _public_error(exc)})
@@ -315,7 +366,7 @@ def rss_refresh_feed(name: str) -> str:
     """Safely refresh one configured RSS/Atom feed by name and persist new entries."""
     try:
         feed = _feed(name)
-        return _json({"name": feed["name"], "url": feed["url"], **_intake().refresh(feed["url"])})
+        return _json({"name": feed["name"], "url": feed["url"], **_intake(feed).refresh(feed["url"])})
     except (ValueError, FeedIntakeError, RuntimeError) as exc:
         return _json({"status": "error", "error": _public_error(exc), "name": name})
 

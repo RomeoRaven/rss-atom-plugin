@@ -8,7 +8,8 @@ query recent entries and refresh status.
 ## Quick start
 
 1. Open **Plugins → RSS / Atom Intake → Configure**.
-2. Add one feed per row as `Category | Name | URL`.
+2. Add one feed per row as `Category | Name | URL`. Optional per-feed limits use
+   `Category | Name | URL | Max size KiB | Items per refresh`.
 3. Open **News** from the left rail and choose a category.
 4. Click a feed name to show only that source's stored articles.
 5. Use the eye to include or skip that source for bulk **Refresh selected**.
@@ -35,7 +36,18 @@ feed per row using `Category | Name | URL`, for example:
 Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom
 ```
 
-Existing `Name | URL` rows remain valid and appear under **Uncategorized**.
+To override one source without changing the global defaults, add both optional
+columns. Either optional value may be blank:
+
+```text
+Developer | Hermes Agent releases | https://github.com/NousResearch/hermes-agent/releases.atom | 1280 | 10
+Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom | | 10
+```
+
+Feed-size overrides accept 1–2048 KiB. Item-count overrides accept 1–100; 100 is
+an absolute per-source ceiling. Existing `Category | Name | URL` and `Name | URL`
+rows remain valid, inherit global defaults, and legacy two-field rows appear under
+**Uncategorized**.
 Enabled plugins also contribute a **News** rail view. Its category selector
 filters configured sources and stored articles. Within a category, **All feeds**
 or a feed-name button filters stored results by source. The eye button independently
@@ -43,6 +55,10 @@ includes or skips that feed for bulk **Refresh selected**; crossed-out eyes are
 skipped. The separate refresh icon refreshes only that source, regardless of its
 eye state. Those bulk-refresh choices persist in that browser and never delete or
 alter configured feeds. Every refresh remains explicit and operator-triggered.
+Selecting one source also shows durable health: last-check time, whether the
+source worked or failed, new/already-stored counts, stored article count, and the
+effective size/item limits. This distinguishes an untested source, no new items,
+an unchanged source, an empty source, and a failed refresh.
 
 ## Optional feed ideas
 
@@ -60,7 +76,7 @@ raising intake limits.
 
 The generic plugin settings dialog also controls:
 
-- items processed from each fetched document (1–1000; default 100);
+- items processed from each fetched document (1–100; default 100);
 - recent items returned when no tool limit is supplied (1–100; default 20);
 - durable entries retained per feed (1–10000; default 1000);
 - maximum decompressed feed size in KiB (1–2048; default 256);
@@ -111,8 +127,8 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 
 Confirm that the URL is an RSS/Atom document rather than a full web page. If it
 is a trusted feed and its decompressed XML is legitimately larger than the
-current ceiling, raise **Maximum feed size (KiB)** conservatively in Configure.
-The accepted range is 1–2048 KiB.
+current ceiling, set a conservative per-feed size override in its **Feeds** row. This preserves the
+smaller global default for every other source. The accepted range is 1–2048 KiB.
 
 ### Feed request is blocked or fails
 
@@ -123,10 +139,11 @@ for that feed; no partial entries are committed.
 
 ### Refresh succeeds but no articles appear
 
-Check that the feed actually contains entries, that the source's eye is included,
-and that the selected category/source filter is not hiding stored results. A
-successful refresh can insert zero articles when every returned item is already
-stored.
+Select the source and read its durable health panel. It reports whether the source
+has never been checked, worked with no new items, returned no entries, was
+unchanged, or failed. The eye only controls bulk refresh; the source's refresh
+icon always tests that source directly. A successful refresh can insert zero
+articles when every returned item is already stored.
 
 ## Non-goals
 

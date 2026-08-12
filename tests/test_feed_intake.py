@@ -1,5 +1,6 @@
 import base64
 import json
+import sqlite3
 import subprocess
 import threading
 import time
@@ -54,7 +55,7 @@ def test_refresh_rss_persists_normalized_entry_with_provenance(tmp_path: Path):
 
     result = intake.refresh(url)
 
-    assert result == {"status": "updated", "inserted": 1, "duplicates": 0, "redirects": 0}
+    assert result == {"status": "updated", "processed": 1, "inserted": 1, "duplicates": 0, "redirects": 0}
     assert intake.recent_entries(limit=20) == [
         {
             "entry_id": "rss-1",
@@ -81,8 +82,20 @@ def test_atom_revalidation_deduplicates_and_304_preserves_entries(tmp_path: Path
     intake = FeedIntake(tmp_path / "feeds.db", transport, check_url=allow_public)
 
     assert intake.refresh(url)["inserted"] == 1
-    assert intake.refresh(url) == {"status": "updated", "inserted": 0, "duplicates": 1, "redirects": 0}
-    assert intake.refresh(url) == {"status": "not_modified", "inserted": 0, "duplicates": 0, "redirects": 0}
+    assert intake.refresh(url) == {
+        "status": "updated",
+        "processed": 1,
+        "inserted": 0,
+        "duplicates": 1,
+        "redirects": 0,
+    }
+    assert intake.refresh(url) == {
+        "status": "not_modified",
+        "processed": 0,
+        "inserted": 0,
+        "duplicates": 0,
+        "redirects": 0,
+    }
 
     assert len(intake.recent_entries()) == 1
     for _, headers, _, _ in transport.calls[1:]:
@@ -194,6 +207,112 @@ def test_successful_refresh_limits_items_processed_before_retention(tmp_path: Pa
 
     assert result["inserted"] == 2
     assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
+
+
+def test_intake_enforces_absolute_100_item_refresh_ceiling(tmp_path: Path):
+    url = "https://feeds.example/hard-cap"
+    items = "".join(f"<item><guid>{index}</guid><title>{index}</title></item>" for index in range(120))
+    body = f'<rss version="2.0"><channel>{items}</channel></rss>'.encode()
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(200, {}, body)]}),
+        check_url=allow_public,
+        max_items_per_refresh=500,
+        max_entries_per_feed=1000,
+    )
+
+    result = intake.refresh(url)
+
+    assert result["processed"] == 100
+    assert result["inserted"] == 100
+    assert intake.count_entries(feed_urls=[url]) == 100
+
+
+def test_refresh_persists_durable_attempt_details_and_migrates_existing_database(tmp_path: Path):
+    url = "https://feeds.example/health"
+    db_path = tmp_path / "feeds.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript(
+            """
+            CREATE TABLE feeds (
+                url TEXT PRIMARY KEY,
+                etag TEXT NOT NULL DEFAULT '',
+                last_modified TEXT NOT NULL DEFAULT '',
+                last_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE entries (
+                feed_url TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                link TEXT NOT NULL,
+                published TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                PRIMARY KEY (feed_url, entry_id)
+            );
+            """
+        )
+    body = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Health</title>
+    <item><guid>one</guid><title>One</title></item>
+    <item><guid>two</guid><title>Two</title></item>
+    <item><guid>three</guid><title>Three</title></item>
+    </channel></rss>"""
+    intake = FeedIntake(
+        db_path,
+        FixtureTransport({url: [Response(200, {}, body), Response(200, {}, body)]}),
+        check_url=allow_public,
+        max_items_per_refresh=2,
+    )
+
+    first = intake.refresh(url)
+    first_status = intake.feed_status(url)
+    second = intake.refresh(url)
+    second_status = intake.feed_status(url)
+
+    assert first == {"status": "updated", "processed": 2, "inserted": 2, "duplicates": 0, "redirects": 0}
+    assert first_status["status"] == "updated"
+    assert first_status["checked_at"]
+    assert first_status | {"checked_at": "<timestamp>"} == {
+        "status": "updated",
+        "error": "",
+        "checked_at": "<timestamp>",
+        "processed": 2,
+        "inserted": 2,
+        "duplicates": 0,
+    }
+    assert second == {"status": "updated", "processed": 2, "inserted": 0, "duplicates": 2, "redirects": 0}
+    assert second_status["checked_at"]
+    assert second_status | {"checked_at": "<timestamp>"} == {
+        "status": "updated",
+        "error": "",
+        "checked_at": "<timestamp>",
+        "processed": 2,
+        "inserted": 0,
+        "duplicates": 2,
+    }
+
+
+def test_failed_refresh_persists_checked_time_and_clears_attempt_counts(tmp_path: Path):
+    url = "https://feeds.example/error-health"
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(503, {}, b"unavailable")]}),
+        check_url=allow_public,
+    )
+
+    with pytest.raises(FeedIntakeError):
+        intake.refresh(url)
+
+    status = intake.feed_status(url)
+    assert status["checked_at"]
+    assert status | {"checked_at": "<timestamp>", "error": "<error>"} == {
+        "status": "error",
+        "error": "<error>",
+        "checked_at": "<timestamp>",
+        "processed": 0,
+        "inserted": 0,
+        "duplicates": 0,
+    }
 
 
 def test_shared_database_path_serializes_refreshes_across_instances(tmp_path: Path):

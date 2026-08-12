@@ -58,7 +58,16 @@ def test_current_protoagent_loads_four_tools_and_invokes_offline_paths(tmp_path,
     recent = json.loads(by_name["rss_recent_entries"].invoke({"limit": 20}))
     assert recent == []
     status = json.loads(by_name["rss_feed_status"].invoke({"name": "Fixture"}))
-    assert status == {"error": "", "name": "Fixture", "status": "never_refreshed", "url": "https://feeds.example/rss"}
+    assert status == {
+        "checked_at": "",
+        "duplicates": 0,
+        "error": "",
+        "inserted": 0,
+        "name": "Fixture",
+        "processed": 0,
+        "status": "never_refreshed",
+        "url": "https://feeds.example/rss",
+    }
 
     loaded_module = sys.modules["protoagent_plugin_rss_atom"]
 
@@ -101,7 +110,7 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
         "timeout_seconds",
     ]
     assert settings["feeds"]["type"] == "string_list"
-    assert (settings["max_items_per_refresh"]["minimum"], settings["max_items_per_refresh"]["maximum"]) == (1, 1000)
+    assert (settings["max_items_per_refresh"]["minimum"], settings["max_items_per_refresh"]["maximum"]) == (1, 100)
     assert (settings["default_recent_items"]["minimum"], settings["default_recent_items"]["maximum"]) == (1, 100)
     assert (settings["max_entries_per_feed"]["minimum"], settings["max_entries_per_feed"]["maximum"]) == (1, 10000)
     assert (settings["max_feed_size_kib"]["minimum"], settings["max_feed_size_kib"]["maximum"]) == (1, 2048)
@@ -275,6 +284,79 @@ def test_categorized_feed_rows_and_legacy_rows_support_category_filters(tmp_path
     }
 
 
+def test_feed_rows_support_optional_per_feed_size_and_item_limits(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        [
+            "Developer | Hermes releases | https://example.com/releases.atom | 1280 | 10",
+            "Developer | Inherited defaults | https://example.com/default.atom",
+        ],
+        max_items_per_refresh=100,
+        max_feed_size_kib=256,
+    )
+    listed = next(tool for tool in result.tools if tool.name == "rss_list_feeds")
+
+    assert json.loads(listed.invoke({})) == [
+        {
+            "category": "Developer",
+            "max_feed_size_kib": 1280,
+            "max_items_per_refresh": 10,
+            "name": "Hermes releases",
+            "url": "https://example.com/releases.atom",
+        },
+        {
+            "category": "Developer",
+            "name": "Inherited defaults",
+            "url": "https://example.com/default.atom",
+        },
+    ]
+
+
+def test_refresh_uses_per_feed_size_and_item_limits(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Bounded | https://feeds.example/rss | 768 | 10"],
+        max_feed_size_kib=256,
+        max_items_per_refresh=20,
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    calls = []
+
+    class OfflineTransport:
+        def request(self, url, headers, *, timeout_seconds, max_bytes):
+            calls.append({"url": url, "max_bytes": max_bytes})
+            items = "".join(f"<item><guid>{index}</guid><title>Item {index}</title></item>" for index in range(12))
+            return Response(200, {}, f'<rss version="2.0"><channel>{items}</channel></rss>'.encode())
+
+    loaded_module._transport = OfflineTransport()
+    from security.egress import set_allowed_hosts
+
+    set_allowed_hosts(["feeds.example"])
+    refresh = next(tool for tool in result.tools if tool.name == "rss_refresh_feed")
+
+    payload = json.loads(refresh.invoke({"name": "Bounded"}))
+
+    assert calls == [{"url": "https://feeds.example/rss", "max_bytes": 768 * 1024}]
+    assert payload["processed"] == 10
+    assert payload["inserted"] == 10
+
+
+def test_per_feed_item_limit_above_hard_ceiling_fails_closed(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Too many | https://example.com/feed | 256 | 101"],
+    )
+    listed = next(tool for tool in result.tools if tool.name == "rss_list_feeds")
+
+    payload = json.loads(listed.invoke({}))
+
+    assert payload["status"] == "invalid_configuration"
+    assert "1 through 100" in payload["error"]
+
+
 def test_news_view_exposes_category_selector_filtered_entries_and_category_refresh(tmp_path, monkeypatch):
     result = _load_plugin(
         tmp_path,
@@ -328,9 +410,19 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
 
         def refresh(self, url):
             refreshed.append(url)
-            return {"status": "updated", "inserted": 1, "duplicates": 0}
+            return {"status": "updated", "processed": 1, "inserted": 1, "duplicates": 0}
 
-    monkeypatch.setattr(loaded_module, "_intake", lambda: StubIntake())
+        def feed_status(self, url):
+            return {
+                "status": "never_refreshed",
+                "error": "",
+                "checked_at": "",
+                "processed": 0,
+                "inserted": 0,
+                "duplicates": 0,
+            }
+
+    monkeypatch.setattr(loaded_module, "_intake", lambda feed=None: StubIntake())
     app = FastAPI()
     for router in rss_routers:
         app.include_router(router["router"], prefix=router["prefix"])
@@ -397,6 +489,85 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
         json={"category": "Technology", "feed_urls": []},
     )
     assert empty.status_code == 400
+
+
+def test_news_exposes_durable_per_feed_health_and_effective_limits(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        [
+            "Developer | Healthy | https://feeds.example/healthy | 768 | 10",
+            "Developer | Failed | https://feeds.example/failed",
+        ],
+        max_feed_size_kib=256,
+        max_items_per_refresh=20,
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+
+    class StubIntake:
+        def count_entries(self, *, feed_urls):
+            return 4 if feed_urls == ["https://feeds.example/failed", "https://feeds.example/healthy"] else 0
+
+        def recent_entries(self, *, limit, feed_url="", feed_urls=None):
+            return []
+
+        def feed_status(self, url):
+            if url.endswith("healthy"):
+                return {
+                    "status": "updated",
+                    "error": "",
+                    "checked_at": "2026-08-12T18:00:00Z",
+                    "processed": 10,
+                    "inserted": 0,
+                    "duplicates": 10,
+                }
+            return {
+                "status": "error",
+                "error": "FeedIntakeError: feed request failed with HTTP 503",
+                "checked_at": "2026-08-12T18:01:00Z",
+                "processed": 0,
+                "inserted": 0,
+                "duplicates": 0,
+            }
+
+    monkeypatch.setattr(loaded_module, "_intake", lambda feed=None: StubIntake())
+    app = FastAPI()
+    for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
+        app.include_router(router["router"], prefix=router["prefix"])
+    client = TestClient(app)
+
+    payload = client.get("/api/plugins/rss_atom/news", params={"category": "Developer"}).json()
+    by_name = {feed["name"]: feed for feed in payload["feeds"]}
+
+    assert by_name["Healthy"] == {
+        "category": "Developer",
+        "name": "Healthy",
+        "url": "https://feeds.example/healthy",
+        "max_feed_size_kib": 768,
+        "max_items_per_refresh": 10,
+        "effective_max_feed_size_kib": 768,
+        "effective_max_items_per_refresh": 10,
+        "stored_count": 0,
+        "health": {
+            "status": "updated",
+            "error": "",
+            "checked_at": "2026-08-12T18:00:00Z",
+            "processed": 10,
+            "inserted": 0,
+            "duplicates": 10,
+        },
+    }
+    assert by_name["Failed"]["effective_max_feed_size_kib"] == 256
+    assert by_name["Failed"]["effective_max_items_per_refresh"] == 20
+    assert by_name["Failed"]["health"]["status"] == "error"
+
+    view = client.get("/plugins/rss_atom/view").text
+    assert 'id="feed-health"' in view
+    assert "Not checked yet" in view
+    assert "Working — no new articles" in view
+    assert "Last refresh failed" in view
+    assert "Source unchanged since the last check" in view
+    assert "Source returned no entries" in view
 
 
 def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monkeypatch):

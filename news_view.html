@@ -33,6 +33,9 @@
     .refresh:hover, .refresh:focus-visible { border-color: var(--pl-color-brand, #8b72ff); outline: none; }
     .refresh:disabled { opacity: .55; cursor: not-allowed; }
     .status { min-height: 22px; margin: 0 0 10px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 12px; }
+    .feed-health { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--pl-color-border, #39434f); border-radius: 7px; background: var(--pl-color-bg-panel, #11161c); color: var(--pl-color-fg-muted, #a8b0ba); font-size: 12px; }
+    .feed-health[data-state="error"] { border-color: #a65353; color: #ffd1d1; }
+    .feed-health[data-state="working"] { border-color: #39745b; color: #c7f4de; }
     .source-heading { margin: 0 0 7px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 11px; }
     .sources { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; }
     .source-control { display: inline-flex; align-items: stretch; border: 1px solid var(--pl-color-border, #39434f); border-radius: 999px; overflow: hidden; background: var(--pl-color-bg-panel, #11161c); }
@@ -74,6 +77,7 @@
         <button class="refresh" id="refresh-category" type="button" disabled>Refresh category</button>
       </header>
       <p class="status" id="status" role="status">Loading configured feeds…</p>
+      <p class="feed-health" id="feed-health">Select a source to see its last refresh health.</p>
       <p class="source-heading">Select a source to filter articles. The eye controls bulk refresh; the refresh icon updates only that source.</p>
       <div class="sources" id="sources" aria-label="Filter articles by source"><button type="button" data-source="all">All feeds</button><button type="button" data-skip-toggle aria-label="Bulk refresh inclusion"></button><button type="button" data-feed-refresh aria-label="Refresh one feed"></button></div>
       <section class="entries" id="entries" aria-label="Recent articles"></section>
@@ -91,11 +95,34 @@
     const sources = document.getElementById("sources");
     const entries = document.getElementById("entries");
     const status = document.getElementById("status");
+    const health = document.getElementById("feed-health");
     const refresh = document.getElementById("refresh-category");
     const esc = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[c]);
     const fmt = (value) => { if (!value) return "Unknown time"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); };
     const eyeIcon = (included) => included ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-2.2 2.8M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a10 10 0 0 0 3-.4M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
     const refreshIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M19 11a7.5 7.5 0 1 0 .2 5"/></svg>';
+    function friendlyError(feed, error) {
+      const value = String(error || "");
+      const http = value.match(/HTTP (\d{3})/i);
+      if (/feed exceeds .*byte limit/i.test(value)) return `feed exceeds its configured ${feed.effective_max_feed_size_kib} KiB limit`;
+      if (http) return `source returned HTTP ${http[1]}. Try again; the source may be temporarily unavailable`;
+      if (/malformed feed/i.test(value)) return "source returned malformed RSS/Atom data";
+      if (/blocked by protoAgent egress policy/i.test(value)) return "source is blocked by protoAgent’s egress policy";
+      if (/deadline|timed? out/i.test(value)) return "source did not finish before the configured timeout";
+      return "source could not be refreshed; try again and check the feed URL if it continues";
+    }
+    function healthText(feed) {
+      if (!feed) return {state:"neutral", text:"Select a source to see its last refresh health."};
+      const attempt = feed.health || {};
+      const checked = attempt.checked_at ? ` Last checked ${fmt(attempt.checked_at)}.` : "";
+      const limits = ` Limit: ${feed.effective_max_items_per_refresh} items, ${feed.effective_max_feed_size_kib} KiB.`;
+      if (attempt.status === "error") return {state:"error", text:`Last refresh failed — ${friendlyError(feed, attempt.error)}.${checked}${limits}`};
+      if (attempt.status === "never_refreshed" || !attempt.status) return {state:"neutral", text:`Not checked yet — use this source’s refresh icon to test it.${limits}`};
+      if (attempt.status === "not_modified") return {state:"working", text:`Working — Source unchanged since the last check. ${feed.stored_count} articles stored.${checked}${limits}`};
+      if (Number(attempt.processed) === 0) return {state:"working", text:`Working — Source returned no entries. ${feed.stored_count} articles stored.${checked}${limits}`};
+      if (Number(attempt.inserted) === 0) return {state:"working", text:`Working — no new articles; ${attempt.duplicates} already stored. ${feed.stored_count} articles stored.${checked}${limits}`};
+      return {state:"working", text:`Working — imported ${attempt.inserted} new of ${attempt.processed} processed. ${feed.stored_count} articles stored.${checked}${limits}`};
+    }
     function includedFeeds() { return state.feeds.filter(feed => !state.skipped.has(feed.url)).map(feed => feed.url); }
     function saveSkipped() { localStorage.setItem(skippedStorageKey, JSON.stringify([...state.skipped].sort())); }
     function updateRefreshState() {
@@ -132,7 +159,11 @@
       selector.querySelectorAll("[data-category]").forEach(button => button.addEventListener("click", () => load(button.dataset.category, "")));
       title.textContent = state.source ? `${state.category} · ${state.source}` : state.category;
       renderSources();
-      entries.innerHTML = data.entries.length ? data.entries.map(entry => `<article class="entry"><div class="entry-meta"><span>${esc(entry.source)}</span><span>${esc(fmt(entry.published))}</span></div><h2><a href="${esc(entry.link)}" target="_blank" rel="noreferrer">${esc(entry.title || "Untitled")}</a></h2>${entry.summary ? `<p>${esc(entry.summary)}</p>` : ""}</article>`).join("") : `<div class="empty">No stored articles for this selection yet. Include its eye and use Refresh selected to fetch it.</div>`;
+      const selectedFeed = state.source ? state.feeds.find(feed => feed.name === state.source) : null;
+      const feedHealth = healthText(selectedFeed);
+      health.dataset.state = feedHealth.state;
+      health.textContent = feedHealth.text;
+      entries.innerHTML = data.entries.length ? data.entries.map(entry => `<article class="entry"><div class="entry-meta"><span>${esc(entry.source)}</span><span>${esc(fmt(entry.published))}</span></div><h2><a href="${esc(entry.link)}" target="_blank" rel="noreferrer">${esc(entry.title || "Untitled")}</a></h2>${entry.summary ? `<p>${esc(entry.summary)}</p>` : ""}</article>`).join("") : `<div class="empty">No stored articles match this selection. Select a source to see its refresh health above.</div>`;
       status.textContent = "";
       updateRefreshState();
     }

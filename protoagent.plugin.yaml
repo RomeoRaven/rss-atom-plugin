@@ -1,6 +1,6 @@
 id: rss_atom
 name: RSS / Atom Intake
-version: 0.6.0
+version: 0.7.0
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.
@@ -20,12 +20,12 @@ settings:
   - key: feeds
     label: Feeds
     type: string_list
-    description: "One feed per row: Category | Name | https://example.com/feed.xml (legacy Name | URL rows become Uncategorized)"
+    description: "One feed per row: Category | Name | URL | optional max size KiB | optional items per refresh (legacy 2- and 3-field rows remain valid)"
   - key: max_items_per_refresh
     label: Items processed per refresh
     type: number
     minimum: 1
-    maximum: 1000
+    maximum: 100
     description: "Maximum entries processed from one fetched feed document. Newest entries are processed first."
   - key: default_recent_items
     label: Recent items returned by default

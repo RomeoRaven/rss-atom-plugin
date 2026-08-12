@@ -22,9 +22,12 @@ The complete first-slice interface is four tools:
 4. report the latest refresh status for one feed.
 
 Configured sources and intake bounds are operator input through protoAgent's
-generic plugin settings UI. GUI feed rows use `Category | Name | URL`; legacy
-`Name | URL` rows become `Uncategorized`, and the existing object YAML form
-remains compatible with an optional `category`. The plugin-owned News view
+generic plugin settings UI. GUI feed rows use `Category | Name | URL`, optionally extended with
+`| Max size KiB | Items per refresh`; legacy `Name | URL` rows become
+`Uncategorized`, and the existing object YAML form remains compatible with
+optional `category`, `max_feed_size_kib`, and `max_items_per_refresh` values.
+Per-feed size accepts 1–2048 KiB and per-feed items accepts 1–100; omitted values
+inherit global defaults and 100 is the absolute item ceiling. The plugin-owned News view
 filters stored articles by category and source. A separate browser-persisted eye
 toggle includes or skips each configured category feed for an explicit selected-
 feed refresh; the server rejects empty, duplicate, unknown, or cross-category
@@ -35,11 +38,12 @@ refresh selections. The agent cannot add, edit, remove, purge, or schedule feeds
 SQLite lives under an instance-scoped plugin data directory. Schema creation is
 idempotent. Entries are unique by `(feed_url, entry_id)`. A successful refresh
 commits entries, validators, and status together, then retains only the configured
-number of entries from the feed's newest-first document order. A failed refresh
-records bounded status without replacing good validators or partially inserting entries.
+number of entries from the feed's newest-first document order. Each attempt
+durably records checked time, processed/new/duplicate counts, status, and bounded
+error. A failed refresh does not replace good validators or partially insert entries.
 
-Disable and uninstall retain data. Re-enable reuses it. Explicit purge and schema
-migration beyond initial idempotent creation are not admitted in this slice.
+Disable and uninstall retain data. Re-enable reuses it. Schema creation and the
+additive feed-health migration are idempotent; no purge behavior is introduced.
 
 ## HTTP policy
 
@@ -50,7 +54,7 @@ migration beyond initial idempotent creation are not admitted in this slice.
 - no credentials or arbitrary headers are accepted;
 - timeout is a 1–60 second total refresh deadline across redirect hops;
 - decompressed response body is user-configurable from 1 KiB–2 MiB;
-- each refresh processes a user-configurable 1–1000 newest entries;
+- each refresh processes 1–100 newest entries, from the feed override or global default;
 - non-2xx except 304 fails closed; retry/background pacing is not automatic;
 - `feedparser` bozo/malformed results are rejected completely;
 - untrusted HTML becomes bounded plain text in tool results.

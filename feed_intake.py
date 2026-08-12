@@ -305,7 +305,7 @@ class FeedIntake:
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self.max_entries_per_feed = max_entries_per_feed
-        self.max_items_per_refresh = max_items_per_refresh
+        self.max_items_per_refresh = max(1, min(int(max_items_per_refresh), 100))
         self._lock = _db_lock(self.db_path)
         self._init_db()
 
@@ -337,6 +337,16 @@ class FeedIntake:
                 );
                 """
             )
+            existing = {row["name"] for row in db.execute("PRAGMA table_info(feeds)").fetchall()}
+            additions = {
+                "last_checked": "TEXT NOT NULL DEFAULT ''",
+                "last_processed": "INTEGER NOT NULL DEFAULT 0",
+                "last_inserted": "INTEGER NOT NULL DEFAULT 0",
+                "last_duplicates": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, declaration in additions.items():
+                if name not in existing:
+                    db.execute(f"ALTER TABLE feeds ADD COLUMN {name} {declaration}")
 
     def _normalize(self, feed_url: str, body: bytes) -> list[dict[str, str]]:
         parsed = feedparser.parse(body)
@@ -448,15 +458,18 @@ class FeedIntake:
 
     def _refresh(self, feed_url: str) -> dict[str, int | str]:
         response, redirects = self._fetch(feed_url, self._validators(feed_url))
+        checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         if response.status == 304:
             with self._connect() as db:
                 db.execute(
-                    "INSERT INTO feeds(url, last_status) VALUES(?, 'not_modified') "
-                    "ON CONFLICT(url) DO UPDATE SET last_status='not_modified', last_error=''",
-                    (feed_url,),
+                    "INSERT INTO feeds(url, last_status, last_checked) VALUES(?, 'not_modified', ?) "
+                    "ON CONFLICT(url) DO UPDATE SET last_status='not_modified', last_error='', "
+                    "last_checked=excluded.last_checked, last_processed=0, last_inserted=0, last_duplicates=0",
+                    (feed_url, checked_at),
                 )
             return {
                 "status": "not_modified",
+                "processed": 0,
                 "inserted": 0,
                 "duplicates": 0,
                 "redirects": redirects,
@@ -464,6 +477,7 @@ class FeedIntake:
         if not 200 <= response.status < 300:
             raise FeedIntakeError(f"feed request failed with HTTP {response.status}")
         normalized = self._normalize(feed_url, response.body)[: self.max_items_per_refresh]
+        processed = len(normalized)
         inserted = 0
         duplicates = 0
         with self._connect() as db:
@@ -496,17 +510,25 @@ class FeedIntake:
                     entry,
                 )
             db.execute(
-                "INSERT INTO feeds(url, etag, last_modified, last_status) VALUES(?, ?, ?, 'updated') "
+                "INSERT INTO feeds(url, etag, last_modified, last_status, last_checked, "
+                "last_processed, last_inserted, last_duplicates) VALUES(?, ?, ?, 'updated', ?, ?, ?, ?) "
                 "ON CONFLICT(url) DO UPDATE SET etag=excluded.etag, "
-                "last_modified=excluded.last_modified, last_status='updated', last_error=''",
+                "last_modified=excluded.last_modified, last_status='updated', last_error='', "
+                "last_checked=excluded.last_checked, last_processed=excluded.last_processed, "
+                "last_inserted=excluded.last_inserted, last_duplicates=excluded.last_duplicates",
                 (
                     feed_url,
                     response.headers.get("etag", ""),
                     response.headers.get("last-modified", ""),
+                    checked_at,
+                    processed,
+                    inserted,
+                    duplicates,
                 ),
             )
         return {
             "status": "updated",
+            "processed": processed,
             "inserted": inserted,
             "duplicates": duplicates,
             "redirects": redirects,
@@ -517,20 +539,40 @@ class FeedIntake:
             try:
                 return self._refresh(feed_url)
             except FeedIntakeError as exc:
+                checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
                 with self._connect() as db:
                     db.execute(
-                        "INSERT INTO feeds(url, last_status, last_error) VALUES(?, 'error', ?) "
-                        "ON CONFLICT(url) DO UPDATE SET last_status='error', last_error=excluded.last_error",
-                        (feed_url, f"{type(exc).__name__}: {exc}"[:500]),
+                        "INSERT INTO feeds(url, last_status, last_error, last_checked) VALUES(?, 'error', ?, ?) "
+                        "ON CONFLICT(url) DO UPDATE SET last_status='error', last_error=excluded.last_error, "
+                        "last_checked=excluded.last_checked, last_processed=0, last_inserted=0, last_duplicates=0",
+                        (feed_url, f"{type(exc).__name__}: {exc}"[:500], checked_at),
                     )
                 raise
 
-    def feed_status(self, feed_url: str) -> dict[str, str]:
+    def feed_status(self, feed_url: str) -> dict[str, str | int]:
         with self._connect() as db:
-            row = db.execute("SELECT last_status, last_error FROM feeds WHERE url = ?", (feed_url,)).fetchone()
+            row = db.execute(
+                "SELECT last_status, last_error, last_checked, last_processed, last_inserted, last_duplicates "
+                "FROM feeds WHERE url = ?",
+                (feed_url,),
+            ).fetchone()
         if not row:
-            return {"status": "never_refreshed", "error": ""}
-        return {"status": row["last_status"], "error": row["last_error"]}
+            return {
+                "status": "never_refreshed",
+                "error": "",
+                "checked_at": "",
+                "processed": 0,
+                "inserted": 0,
+                "duplicates": 0,
+            }
+        return {
+            "status": row["last_status"],
+            "error": row["last_error"],
+            "checked_at": row["last_checked"],
+            "processed": row["last_processed"],
+            "inserted": row["last_inserted"],
+            "duplicates": row["last_duplicates"],
+        }
 
     def recent_entries(
         self, limit: int = 20, feed_url: str = "", feed_urls: list[str] | None = None
