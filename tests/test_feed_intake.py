@@ -15,6 +15,7 @@ from feed_intake import (
     FeedSafetyError,
     FeedTooLargeError,
     HttpxTransport,
+    ProtoAgentEgressPolicy,
     Response,
 )
 
@@ -392,6 +393,59 @@ def test_http_transport_rejects_invalid_worker_protocol(monkeypatch, worker_resu
             timeout_seconds=1,
             max_bytes=4,
         )
+
+
+def test_http_transport_maps_worker_launch_failure(monkeypatch):
+    def fail_launch(*args, **kwargs):
+        raise OSError("fixture spawn failure")
+
+    monkeypatch.setattr(subprocess, "Popen", fail_launch)
+    with pytest.raises(FeedIntakeError, match="worker"):
+        HttpxTransport().request(
+            "https://feeds.example/rss",
+            {},
+            timeout_seconds=1,
+            max_bytes=1024,
+        )
+
+
+def test_egress_check_is_bounded_by_refresh_deadline(tmp_path: Path, monkeypatch):
+    url = "https://feeds.example/rss"
+    transport = FixtureTransport({})
+    slow_dns = """
+import socket
+import time
+
+
+def slow_getaddrinfo(*args, **kwargs):
+    time.sleep(0.7)
+    raise socket.gaierror("fixture DNS failure")
+
+
+socket.getaddrinfo = slow_getaddrinfo
+"""
+    policy = ProtoAgentEgressPolicy(Path(__file__).parents[2] / "protoAgent", [])
+    monkeypatch.setattr(policy, "_WORKER", slow_dns + policy._WORKER)
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        transport,
+        check_url=policy,
+        timeout_seconds=0.2,
+    )
+    started = time.monotonic()
+    with pytest.raises(FeedIntakeError, match="deadline"):
+        intake.refresh(url)
+    assert time.monotonic() - started < 0.35
+    assert transport.calls == []
+
+
+def test_protoagent_egress_policy_preserves_allowlist_and_private_ip_rules():
+    root = Path(__file__).parents[2] / "protoAgent"
+    assert (
+        ProtoAgentEgressPolicy(root, ["internal.example"])("https://internal.example/feed", timeout_seconds=1) is None
+    )
+    blocked = ProtoAgentEgressPolicy(root, [])("http://127.0.0.1/feed", timeout_seconds=1)
+    assert blocked is not None and "private/internal" in blocked
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):

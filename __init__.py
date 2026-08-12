@@ -10,9 +10,9 @@ from typing import Any, Callable
 from langchain_core.tools import tool
 
 if __package__:
-    from .feed_intake import FeedIntake, FeedIntakeError, HttpxTransport
+    from .feed_intake import FeedIntake, FeedIntakeError, HttpxTransport, ProtoAgentEgressPolicy
 else:  # Standalone pytest imports the root entry as top-level ``__init__``.
-    from feed_intake import FeedIntake, FeedIntakeError, HttpxTransport
+    from feed_intake import FeedIntake, FeedIntakeError, HttpxTransport, ProtoAgentEgressPolicy
 
 
 def _empty_config() -> dict[str, Any]:
@@ -75,13 +75,17 @@ def _intake() -> FeedIntake:
     except (TypeError, ValueError) as exc:
         raise ValueError("max_bytes and timeout_seconds must be numeric") from exc
     try:
-        from security.egress import check_url
+        from security import egress
     except ImportError as exc:
         raise RuntimeError("protoAgent security.egress is required") from exc
+    egress_policy = ProtoAgentEgressPolicy(
+        Path(egress.__file__).resolve().parents[1],
+        egress.allowed_hosts(),
+    )
     return FeedIntake(
         _data_dir() / "feeds.db",
         _transport,
-        check_url=check_url,
+        check_url=egress_policy,
         max_bytes=max_bytes,
         timeout_seconds=timeout_seconds,
         max_entries_per_feed=max_entries,

@@ -4,6 +4,7 @@ import base64
 import calendar
 import hashlib
 import html
+import inspect
 import json
 import sqlite3
 import subprocess
@@ -56,6 +57,85 @@ class Transport(Protocol):
     def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response: ...
 
 
+def _run_worker(worker: str, payload: str, *, timeout_seconds: float, label: str) -> str:
+    started = time.monotonic()
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-c", worker],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as exc:
+        raise FeedIntakeError(f"{label} worker failed") from exc
+    try:
+        remaining = timeout_seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            process.kill()
+            process.communicate()
+            raise FeedIntakeError("feed refresh exceeded total deadline")
+        stdout, _ = process.communicate(payload, timeout=remaining)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        process.communicate()
+        raise FeedIntakeError("feed refresh exceeded total deadline") from exc
+    except OSError as exc:
+        process.kill()
+        process.communicate()
+        raise FeedIntakeError(f"{label} worker failed") from exc
+    if process.returncode != 0:
+        raise FeedIntakeError(f"{label} worker failed")
+    return stdout
+
+
+class ProtoAgentEgressPolicy:
+    _WORKER = r"""
+import json
+import sys
+
+request = json.loads(sys.stdin.read())
+sys.path.insert(0, request["module_root"])
+try:
+    from security import egress
+    egress.set_allowed_hosts(request["allowed_hosts"])
+    result = {"ok": True, "blocked": egress.check_url(request["url"])}
+except BaseException:
+    result = {"ok": False}
+sys.stdout.write(json.dumps(result, separators=(",", ":")))
+"""
+
+    def __init__(self, module_root: str | Path, allowed_hosts: list[str]) -> None:
+        self.module_root = str(Path(module_root).resolve())
+        self.allowed_hosts = [str(host) for host in allowed_hosts]
+
+    def __call__(self, url: str, *, timeout_seconds: float) -> str | None:
+        payload = json.dumps(
+            {
+                "url": url,
+                "module_root": self.module_root,
+                "allowed_hosts": self.allowed_hosts,
+            },
+            separators=(",", ":"),
+        )
+        stdout = _run_worker(
+            self._WORKER,
+            payload,
+            timeout_seconds=timeout_seconds,
+            label="feed egress",
+        )
+        try:
+            result = json.loads(stdout)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise FeedIntakeError("feed egress worker returned invalid data") from exc
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            raise FeedIntakeError("feed egress worker returned invalid data")
+        blocked = result.get("blocked")
+        if blocked is not None and not isinstance(blocked, str):
+            raise FeedIntakeError("feed egress worker returned invalid data")
+        return blocked
+
+
 class HttpxTransport:
     _WORKER = r"""
 import base64
@@ -104,21 +184,12 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
             },
             separators=(",", ":"),
         )
-        process = subprocess.Popen(
-            [sys.executable, "-c", self._WORKER],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
+        stdout = _run_worker(
+            self._WORKER,
+            payload,
+            timeout_seconds=timeout_seconds,
+            label="feed request",
         )
-        try:
-            stdout, _ = process.communicate(payload, timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as exc:
-            process.kill()
-            process.communicate()
-            raise FeedIntakeError("feed response exceeded total deadline") from exc
-        if process.returncode != 0:
-            raise FeedIntakeError("feed request worker failed")
         try:
             result = json.loads(stdout)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -206,14 +277,18 @@ class FeedIntake:
         db_path: str | Path,
         transport: Transport,
         *,
-        check_url: Callable[[str], str | None],
+        check_url: Callable[..., str | None],
         max_bytes: int = 256 * 1024,
         timeout_seconds: float = 15.0,
         max_entries_per_feed: int = 1000,
     ) -> None:
         self.db_path = Path(db_path)
         self.transport = transport
-        self.check_url = check_url
+        parameters = inspect.signature(check_url).parameters
+        if "timeout_seconds" in parameters:
+            self.check_url = check_url
+        else:
+            self.check_url = lambda url, *, timeout_seconds: check_url(url)
         self.max_bytes = max_bytes
         self.timeout_seconds = timeout_seconds
         self.max_entries_per_feed = max_entries_per_feed
@@ -303,7 +378,10 @@ class FeedIntake:
                 raise FeedSafetyError("feed URL must use HTTP or HTTPS and include a host")
             if parts.username is not None or parts.password is not None:
                 raise FeedSafetyError("feed URL must not include credentials")
-            blocked = self.check_url(current)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FeedIntakeError("feed refresh exceeded total deadline")
+            blocked = self.check_url(current, timeout_seconds=remaining)
             if blocked:
                 raise FeedSafetyError("feed URL blocked by protoAgent egress policy")
             remaining = deadline - time.monotonic()
