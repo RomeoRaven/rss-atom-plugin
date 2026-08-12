@@ -1,3 +1,5 @@
+import base64
+import json
 import subprocess
 import threading
 import time
@@ -355,6 +357,41 @@ socket.getaddrinfo = slow_getaddrinfo
     assert time.monotonic() - started < 0.35
     assert len(children) == 1
     assert children[0].poll() is not None
+
+
+@pytest.mark.parametrize(
+    "worker_result",
+    [
+        [],
+        {"ok": "yes"},
+        {"ok": True, "status": True, "headers": {}, "body": ""},
+        {"ok": True, "status": 200, "headers": [], "body": ""},
+        {
+            "ok": True,
+            "status": 200,
+            "headers": {},
+            "body": base64.b64encode(b"12345").decode("ascii"),
+        },
+    ],
+)
+def test_http_transport_rejects_invalid_worker_protocol(monkeypatch, worker_result):
+    class FakeProcess:
+        returncode = 0
+
+        def communicate(self, payload=None, timeout=None):
+            return json.dumps(worker_result), ""
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    with pytest.raises(FeedIntakeError, match="worker"):
+        HttpxTransport().request(
+            "https://feeds.example/rss",
+            {},
+            timeout_seconds=1,
+            max_bytes=4,
+        )
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):

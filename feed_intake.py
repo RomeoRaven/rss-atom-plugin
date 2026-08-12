@@ -123,8 +123,12 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
             result = json.loads(stdout)
         except (json.JSONDecodeError, TypeError) as exc:
             raise FeedIntakeError("feed request worker returned invalid data") from exc
-        if not result.get("ok"):
-            error = str(result.get("error") or "")
+        if not isinstance(result, dict) or type(result.get("ok")) is not bool:
+            raise FeedIntakeError("feed request worker returned invalid data")
+        if not result["ok"]:
+            error = result.get("error")
+            if not isinstance(error, str):
+                raise FeedIntakeError("feed request worker returned invalid data")
             if error == "too_large":
                 raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
             if error == "invalid_content_length":
@@ -133,12 +137,23 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
                 raise FeedIntakeError(f"feed request failed: {error.removeprefix('httpx:')}")
             raise FeedIntakeError("feed request worker failed")
         try:
-            body = base64.b64decode(result["body"], validate=True)
-            status = int(result["status"])
-            response_headers = {str(key): str(value) for key, value in result["headers"].items()}
+            encoded_body = result["body"]
+            status = result["status"]
+            raw_headers = result["headers"]
+            if not isinstance(encoded_body, str):
+                raise TypeError
+            if type(status) is not int or not 100 <= status <= 599:
+                raise TypeError
+            if not isinstance(raw_headers, dict) or not all(
+                isinstance(key, str) and isinstance(value, str) for key, value in raw_headers.items()
+            ):
+                raise TypeError
+            body = base64.b64decode(encoded_body, validate=True)
+            if len(body) > max_bytes:
+                raise TypeError
         except (KeyError, TypeError, ValueError) as exc:
             raise FeedIntakeError("feed request worker returned invalid data") from exc
-        return Response(status, response_headers, body)
+        return Response(status, raw_headers, body)
 
 
 class _PlainText(HTMLParser):
