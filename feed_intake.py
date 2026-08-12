@@ -260,8 +260,8 @@ class FeedIntake:
             redirects += 1
             if redirects > 3:
                 raise FeedSafetyError("too many feed redirects")
-            target = urljoin(current, location)
             try:
+                target = urljoin(current, location)
                 target_parts = urlsplit(target)
                 target_port = target_parts.port
             except ValueError as exc:

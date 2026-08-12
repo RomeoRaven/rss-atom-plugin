@@ -228,11 +228,19 @@ def test_malformed_feed_url_records_safety_failure(tmp_path: Path):
     assert intake.feed_status(url)["status"] == "error"
 
 
-def test_malformed_redirect_url_records_safety_failure(tmp_path: Path):
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://target.example:invalid/feed",
+        "https://[invalid/feed",
+        "//[invalid/feed",
+    ],
+)
+def test_malformed_redirect_url_records_safety_failure(tmp_path: Path, location: str):
     url = "https://feeds.example/start"
     intake = FeedIntake(
         tmp_path / "feeds.db",
-        FixtureTransport({url: [Response(302, {"location": "https://target.example:invalid/feed"}, b"")]}),
+        FixtureTransport({url: [Response(302, {"location": location}, b"")]}),
         check_url=allow_public,
     )
 
