@@ -72,8 +72,8 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 ## Non-goals
 
 No crawler, browser renderer, web search, News editorial policy, scheduler,
-background polling, notifications, publishing, console UI, feed add/remove tool,
-credentials, remediation, or protoAgent core change.
+background polling, notifications, publishing, standalone console replacement,
+feed add/remove tool, credentials, remediation, or protoAgent core change.
 
 ## Platform evidence
 

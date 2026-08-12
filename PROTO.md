@@ -62,6 +62,6 @@ transport connection.
 
 ## Exclusions
 
-No core edits, News plugin, crawler, browser, search engine, scheduler, LLM polling,
-background surface, notifications, events, console view, source write-back,
-feed mutation tools, credentials, publication, deployment, release, or PC1/PC2 work.
+No core edits, crawler, browser renderer, search engine, scheduler, LLM polling,
+background surface, notifications, events, standalone console replacement, source
+write-back, feed mutation tools, credentials, publication, release, or PC1/PC2 work.
