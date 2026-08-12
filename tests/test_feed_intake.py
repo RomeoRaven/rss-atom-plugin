@@ -233,6 +233,7 @@ def test_http_transport_enforces_total_response_deadline():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     started = time.monotonic()
+    elapsed = None
     try:
         with pytest.raises(FeedIntakeError, match="deadline"):
             HttpxTransport().request(
@@ -241,10 +242,11 @@ def test_http_transport_enforces_total_response_deadline():
                 timeout_seconds=0.2,
                 max_bytes=1024,
             )
+        elapsed = time.monotonic() - started
     finally:
         server.shutdown()
         server.server_close()
-    assert time.monotonic() - started < 0.55
+    assert elapsed is not None and elapsed < 0.55
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):
