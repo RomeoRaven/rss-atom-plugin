@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import calendar
 import hashlib
 import html
@@ -54,11 +55,11 @@ class Transport(Protocol):
 
 
 class HttpxTransport:
-    def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
-        deadline = time.monotonic() + timeout_seconds
-        try:
-            with httpx.Client(follow_redirects=False, timeout=timeout_seconds) as client:
-                with client.stream("GET", url, headers=headers) as response:
+    @staticmethod
+    async def _request(url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
+        async with asyncio.timeout(timeout_seconds):
+            async with httpx.AsyncClient(follow_redirects=False, timeout=timeout_seconds) as client:
+                async with client.stream("GET", url, headers=headers) as response:
                     declared = response.headers.get("content-length")
                     if declared:
                         try:
@@ -67,17 +68,37 @@ class HttpxTransport:
                         except ValueError as exc:
                             raise FeedIntakeError("invalid Content-Length") from exc
                     body = bytearray()
-                    for chunk in response.iter_bytes():
-                        if time.monotonic() > deadline:
-                            raise FeedIntakeError("feed response exceeded total deadline")
+                    async for chunk in response.aiter_bytes():
                         body.extend(chunk)
                         if len(body) > max_bytes:
                             raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
                     return Response(response.status_code, dict(response.headers), bytes(body))
-        except FeedIntakeError:
-            raise
-        except httpx.HTTPError as exc:
-            raise FeedIntakeError(f"feed request failed: {type(exc).__name__}") from exc
+
+    def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
+        result: list[Response] = []
+        errors: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                result.append(
+                    asyncio.run(self._request(url, headers, timeout_seconds=timeout_seconds, max_bytes=max_bytes))
+                )
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=run, name="rss-atom-http", daemon=True)
+        thread.start()
+        thread.join()
+        if errors:
+            exc = errors[0]
+            if isinstance(exc, FeedIntakeError):
+                raise exc
+            if isinstance(exc, TimeoutError):
+                raise FeedIntakeError("feed response exceeded total deadline") from exc
+            if isinstance(exc, httpx.HTTPError):
+                raise FeedIntakeError(f"feed request failed: {type(exc).__name__}") from exc
+            raise exc
+        return result[0]
 
 
 class _PlainText(HTMLParser):
@@ -297,18 +318,36 @@ class FeedIntake:
             raise FeedIntakeError(f"feed request failed with HTTP {response.status}")
         normalized = self._normalize(feed_url, response.body)
         inserted = 0
+        duplicates = 0
         with self._connect() as db:
-            for entry in reversed(normalized):
-                inserted += db.execute(
-                    "INSERT OR IGNORE INTO entries(feed_url, entry_id, title, link, published, summary) "
+            existing = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT entry_id, feed_url, title, link, published, summary "
+                    "FROM entries WHERE feed_url = ? ORDER BY rowid DESC",
+                    (feed_url,),
+                ).fetchall()
+            ]
+            existing_ids = {entry["entry_id"] for entry in existing}
+            retained: list[dict[str, str]] = []
+            retained_ids: set[str] = set()
+            for entry in [*normalized, *existing]:
+                entry_id = entry["entry_id"]
+                if entry_id in retained_ids:
+                    continue
+                retained.append(entry)
+                retained_ids.add(entry_id)
+                if len(retained) == self.max_entries_per_feed:
+                    break
+            inserted = sum(1 for entry in retained if entry["entry_id"] not in existing_ids)
+            duplicates = sum(1 for entry in retained if entry["entry_id"] in existing_ids)
+            db.execute("DELETE FROM entries WHERE feed_url = ?", (feed_url,))
+            for entry in reversed(retained):
+                db.execute(
+                    "INSERT INTO entries(feed_url, entry_id, title, link, published, summary) "
                     "VALUES(:feed_url, :entry_id, :title, :link, :published, :summary)",
                     entry,
-                ).rowcount
-            db.execute(
-                "DELETE FROM entries WHERE feed_url = ? AND rowid NOT IN "
-                "(SELECT rowid FROM entries WHERE feed_url = ? ORDER BY rowid DESC LIMIT ?)",
-                (feed_url, feed_url, self.max_entries_per_feed),
-            )
+                )
             db.execute(
                 "INSERT INTO feeds(url, etag, last_modified, last_status) VALUES(?, ?, ?, 'updated') "
                 "ON CONFLICT(url) DO UPDATE SET etag=excluded.etag, "
@@ -322,7 +361,7 @@ class FeedIntake:
         return {
             "status": "updated",
             "inserted": inserted,
-            "duplicates": len(normalized) - inserted,
+            "duplicates": duplicates,
             "redirects": redirects,
         }
 

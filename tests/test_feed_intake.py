@@ -155,13 +155,19 @@ def test_successful_refresh_caps_stored_entries_per_feed(tmp_path: Path):
     </channel></rss>"""
     intake = FeedIntake(
         tmp_path / "feeds.db",
-        FixtureTransport({url: [Response(200, {}, body)]}),
+        FixtureTransport({url: [Response(200, {}, body), Response(200, {}, body)]}),
         check_url=allow_public,
         max_entries_per_feed=2,
     )
 
-    intake.refresh(url)
+    first = intake.refresh(url)
+    assert first["inserted"] == 2
+    assert first["duplicates"] == 0
+    assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
 
+    second = intake.refresh(url)
+    assert second["inserted"] == 0
+    assert second["duplicates"] == 2
     assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
 
 
@@ -281,6 +287,39 @@ def test_http_transport_enforces_total_response_deadline():
         server.shutdown()
         server.server_close()
     assert elapsed is not None and elapsed < 0.55
+
+
+def test_http_transport_deadline_includes_headers_and_body_wait():
+    class SplitDelayHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            time.sleep(0.18)
+            self.send_response(200)
+            self.end_headers()
+            time.sleep(0.18)
+            self.wfile.write(b"x")
+            self.wfile.flush()
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SplitDelayHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    elapsed = None
+    try:
+        with pytest.raises(FeedIntakeError, match="deadline"):
+            HttpxTransport().request(
+                f"http://127.0.0.1:{server.server_port}/feed",
+                {},
+                timeout_seconds=0.2,
+                max_bytes=1024,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert elapsed is not None and elapsed < 0.3
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):
