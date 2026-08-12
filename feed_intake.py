@@ -5,6 +5,7 @@ import hashlib
 import html
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -54,6 +55,7 @@ class Transport(Protocol):
 
 class HttpxTransport:
     def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response:
+        deadline = time.monotonic() + timeout_seconds
         try:
             with httpx.Client(follow_redirects=False, timeout=timeout_seconds) as client:
                 with client.stream("GET", url, headers=headers) as response:
@@ -66,6 +68,8 @@ class HttpxTransport:
                             raise FeedIntakeError("invalid Content-Length") from exc
                     body = bytearray()
                     for chunk in response.iter_bytes():
+                        if time.monotonic() > deadline:
+                            raise FeedIntakeError("feed response exceeded total deadline")
                         body.extend(chunk)
                         if len(body) > max_bytes:
                             raise FeedTooLargeError(f"feed exceeds {max_bytes} byte limit")
@@ -175,7 +179,10 @@ class FeedIntake:
             raise FeedParseError(f"malformed feed: {type(parsed.bozo_exception).__name__}")
         entries: list[dict[str, str]] = []
         for item in parsed.entries:
-            link = _canonical_url(str(item.get("link") or ""))
+            try:
+                link = _canonical_url(str(item.get("link") or ""))
+            except ValueError as exc:
+                raise FeedParseError("malformed entry URL") from exc
             title = _plain_text(str(item.get("title") or ""))
             published = _published_iso(item)
             summary_source = item.get("summary") or item.get("description") or ""
@@ -214,19 +221,27 @@ class FeedIntake:
         current = feed_url
         request_headers = dict(headers)
         redirects = 0
+        deadline = time.monotonic() + self.timeout_seconds
         while True:
             parts = urlsplit(current)
             if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
                 raise FeedSafetyError("feed URL must use HTTP or HTTPS and include a host")
+            if parts.username is not None or parts.password is not None:
+                raise FeedSafetyError("feed URL must not include credentials")
             blocked = self.check_url(current)
             if blocked:
-                raise FeedSafetyError(blocked)
+                raise FeedSafetyError("feed URL blocked by protoAgent egress policy")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FeedIntakeError("feed refresh exceeded total deadline")
             response = self.transport.request(
                 current,
                 request_headers,
-                timeout_seconds=self.timeout_seconds,
+                timeout_seconds=remaining,
                 max_bytes=self.max_bytes,
             )
+            if time.monotonic() > deadline:
+                raise FeedIntakeError("feed refresh exceeded total deadline")
             lowered = {str(key).lower(): str(value) for key, value in response.headers.items()}
             response = Response(response.status, lowered, response.body)
             declared = response.headers.get("content-length")
@@ -277,7 +292,7 @@ class FeedIntake:
         normalized = self._normalize(feed_url, response.body)
         inserted = 0
         with self._connect() as db:
-            for entry in normalized:
+            for entry in reversed(normalized):
                 inserted += db.execute(
                     "INSERT OR IGNORE INTO entries(feed_url, entry_id, title, link, published, summary) "
                     "VALUES(:feed_url, :entry_id, :title, :link, :published, :summary)",

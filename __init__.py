@@ -92,6 +92,10 @@ def _json(value: Any) -> str:
     return json.dumps(value, indent=2, sort_keys=True)
 
 
+def _public_error(exc: Exception) -> str:
+    return str(exc)[:500]
+
+
 @tool
 def rss_list_feeds() -> str:
     """List operator-configured RSS/Atom feeds by stable name and source URL."""
@@ -108,7 +112,7 @@ def rss_refresh_feed(name: str) -> str:
         feed = _feed(name)
         return _json({"name": feed["name"], "url": feed["url"], **_intake().refresh(feed["url"])})
     except (ValueError, FeedIntakeError, RuntimeError) as exc:
-        return _json({"status": "error", "error": str(exc), "name": name})
+        return _json({"status": "error", "error": _public_error(exc), "name": name})
 
 
 @tool
@@ -119,7 +123,7 @@ def rss_recent_entries(limit: int = 20, name: str = "") -> str:
         feed_url = _feed(name)["url"] if name.strip() else ""
         return _json(_intake().recent_entries(limit=bounded, feed_url=feed_url))
     except (TypeError, ValueError, RuntimeError) as exc:
-        return _json({"status": "error", "error": str(exc)})
+        return _json({"status": "error", "error": _public_error(exc)})
 
 
 @tool
@@ -129,7 +133,7 @@ def rss_feed_status(name: str) -> str:
         feed = _feed(name)
         return _json({"name": feed["name"], "url": feed["url"], **_intake().feed_status(feed["url"])})
     except (ValueError, RuntimeError) as exc:
-        return _json({"status": "error", "error": str(exc), "name": name})
+        return _json({"status": "error", "error": _public_error(exc), "name": name})
 
 
 def register(registry) -> None:

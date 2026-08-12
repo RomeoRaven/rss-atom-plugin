@@ -28,9 +28,9 @@ or schedule them.
 
 SQLite lives under an instance-scoped plugin data directory. Schema creation is
 idempotent. Entries are unique by `(feed_url, entry_id)`. A successful refresh
-commits entries, validators, and status together, then retains only the newest
-configured number of entries per feed. A failed refresh records bounded status
-without replacing good validators or partially inserting entries.
+commits entries, validators, and status together, then retains only the configured
+number of entries from the feed's newest-first document order. A failed refresh
+records bounded status without replacing good validators or partially inserting entries.
 
 Disable and uninstall retain data. Re-enable reuses it. Explicit purge and schema
 migration beyond initial idempotent creation are not admitted in this slice.
@@ -42,7 +42,8 @@ migration beyond initial idempotent creation are not admitted in this slice.
 - redirects are manual, maximum three, and HTTPS-to-HTTP is refused;
 - validators are removed on cross-origin redirects;
 - no credentials or arbitrary headers are accepted;
-- timeout is 1–60 seconds; decompressed response body is 1 KiB–2 MiB;
+- timeout is a 1–60 second total refresh deadline across redirect hops;
+- decompressed response body is 1 KiB–2 MiB;
 - non-2xx except 304 fails closed; retry/background pacing is not automatic;
 - `feedparser` bozo/malformed results are rejected completely;
 - untrusted HTML becomes bounded plain text in tool results.

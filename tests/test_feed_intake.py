@@ -1,10 +1,19 @@
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
-from feed_intake import FeedIntake, FeedIntakeError, FeedParseError, FeedSafetyError, FeedTooLargeError, Response
+from feed_intake import (
+    FeedIntake,
+    FeedIntakeError,
+    FeedParseError,
+    FeedSafetyError,
+    FeedTooLargeError,
+    HttpxTransport,
+    Response,
+)
 
 RSS = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Fixture News</title>
@@ -153,7 +162,7 @@ def test_successful_refresh_caps_stored_entries_per_feed(tmp_path: Path):
 
     intake.refresh(url)
 
-    assert [entry["entry_id"] for entry in intake.recent_entries()] == ["three", "two"]
+    assert [entry["entry_id"] for entry in intake.recent_entries()] == ["one", "two"]
 
 
 def test_shared_database_path_serializes_refreshes_across_instances(tmp_path: Path):
@@ -195,3 +204,83 @@ def test_non_http_scheme_is_rejected_before_egress_or_transport(tmp_path: Path):
         intake.refresh("file:///etc/passwd")
 
     assert transport.calls == []
+
+
+def test_url_userinfo_is_rejected_before_egress_or_transport(tmp_path: Path):
+    transport = FixtureTransport({})
+    intake = FeedIntake(tmp_path / "feeds.db", transport, check_url=allow_public)
+
+    with pytest.raises(FeedSafetyError, match="credentials"):
+        intake.refresh("https://user:secret@feeds.example/rss")
+
+    assert transport.calls == []
+
+
+def test_http_transport_enforces_total_response_deadline():
+    class SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            for _ in range(6):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.1)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    try:
+        with pytest.raises(FeedIntakeError, match="deadline"):
+            HttpxTransport().request(
+                f"http://127.0.0.1:{server.server_port}/feed",
+                {},
+                timeout_seconds=0.2,
+                max_bytes=1024,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert time.monotonic() - started < 0.55
+
+
+def test_malformed_entry_url_records_parse_failure(tmp_path: Path):
+    url = "https://feeds.example/malformed-link"
+    body = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>Bad link</title>
+    <item><guid>bad-link</guid><title>Bad link</title><link>https://news.example:invalid/item</link></item>
+    </channel></rss>"""
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(200, {}, body)]}),
+        check_url=allow_public,
+    )
+
+    with pytest.raises(FeedParseError, match="entry URL"):
+        intake.refresh(url)
+
+    assert intake.feed_status(url)["status"] == "error"
+
+
+def test_refresh_deadline_is_shared_across_redirect_hops(tmp_path: Path):
+    start = "https://feeds.example/start"
+    target = "https://feeds.example/target"
+
+    class SlowRedirectTransport:
+        def request(self, url, headers, *, timeout_seconds, max_bytes):
+            time.sleep(0.04)
+            if url == start:
+                return Response(302, {"location": target}, b"")
+            return Response(200, {}, RSS)
+
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        SlowRedirectTransport(),
+        check_url=allow_public,
+        timeout_seconds=0.06,
+    )
+
+    with pytest.raises(FeedIntakeError, match="deadline"):
+        intake.refresh(start)

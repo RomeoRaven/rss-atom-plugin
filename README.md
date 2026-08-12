@@ -34,7 +34,8 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 - pA `security.egress.check_url` runs before every request and redirect.
 - Redirects are manual and capped at three; HTTPS downgrade is refused.
 - Cross-origin redirects do not receive stored ETag/Last-Modified validators.
-- Time, decompressed response bytes, query size, and stored entries per feed are bounded.
+- The configured timeout is one total refresh deadline across all redirect hops.
+- Decompressed response bytes, query size, and stored entries per feed are bounded.
 - Malformed feeds and request errors commit no partial entries and expose bounded error status.
 - Feed HTML is reduced to plain text; scripts and styles are suppressed.
 - Refreshes are operator-triggered and serialized in-process.

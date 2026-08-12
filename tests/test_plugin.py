@@ -87,3 +87,21 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
     source = (PLUGIN_ROOT / "__init__.py").read_text()
     assert "register_surface" not in source
     assert "schedule_recurring" not in source
+
+
+def test_refresh_tool_bounds_agent_visible_egress_error(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        [{"name": "Blocked", "url": "https://blocked.example/rss"}],
+    )
+    from security.egress import set_allowed_hosts
+
+    set_allowed_hosts([f"allowed-{index}.example" for index in range(2000)])
+    refresh = next(tool for tool in result.tools if tool.name == "rss_refresh_feed")
+
+    payload = json.loads(refresh.invoke({"name": "Blocked"}))
+
+    assert payload["status"] == "error"
+    assert len(payload["error"]) <= 500
+    assert len(json.dumps(payload)) < 700
