@@ -57,6 +57,19 @@ class Transport(Protocol):
     def request(self, url: str, headers: dict[str, str], *, timeout_seconds: float, max_bytes: int) -> Response: ...
 
 
+def _cleanup_worker(process: subprocess.Popen[str]) -> None:
+    killed = False
+    try:
+        process.kill()
+        killed = True
+    except OSError:
+        pass
+    try:
+        process.communicate(timeout=None if killed else 0)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _run_worker(worker: str, payload: str, *, timeout_seconds: float, label: str) -> str:
     started = time.monotonic()
     try:
@@ -72,17 +85,14 @@ def _run_worker(worker: str, payload: str, *, timeout_seconds: float, label: str
     try:
         remaining = timeout_seconds - (time.monotonic() - started)
         if remaining <= 0:
-            process.kill()
-            process.communicate()
+            _cleanup_worker(process)
             raise FeedIntakeError("feed refresh exceeded total deadline")
         stdout, _ = process.communicate(payload, timeout=remaining)
     except subprocess.TimeoutExpired as exc:
-        process.kill()
-        process.communicate()
+        _cleanup_worker(process)
         raise FeedIntakeError("feed refresh exceeded total deadline") from exc
     except OSError as exc:
-        process.kill()
-        process.communicate()
+        _cleanup_worker(process)
         raise FeedIntakeError(f"{label} worker failed") from exc
     if process.returncode != 0:
         raise FeedIntakeError(f"{label} worker failed")
@@ -128,7 +138,7 @@ sys.stdout.write(json.dumps(result, separators=(",", ":")))
             result = json.loads(stdout)
         except (json.JSONDecodeError, TypeError, ValueError, RecursionError) as exc:
             raise FeedIntakeError("feed egress worker returned invalid data") from exc
-        if not isinstance(result, dict) or result.get("ok") is not True:
+        if not isinstance(result, dict) or set(result) != {"ok", "blocked"} or result.get("ok") is not True:
             raise FeedIntakeError("feed egress worker returned invalid data")
         blocked = result.get("blocked")
         if blocked is not None and not isinstance(blocked, str):

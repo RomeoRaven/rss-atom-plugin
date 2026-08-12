@@ -409,6 +409,33 @@ def test_http_transport_maps_worker_launch_failure(monkeypatch):
         )
 
 
+def test_worker_cleanup_failure_does_not_override_fixed_error(monkeypatch):
+    class CleanupFailureProcess:
+        returncode = 0
+
+        def __init__(self):
+            self.communicate_calls = 0
+
+        def communicate(self, payload=None, timeout=None):
+            self.communicate_calls += 1
+            raise OSError("fixture communicate failure")
+
+        def kill(self):
+            raise PermissionError("fixture kill failure")
+
+    process = CleanupFailureProcess()
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
+    with pytest.raises(FeedIntakeError) as raised:
+        HttpxTransport().request(
+            "https://feeds.example/rss",
+            {},
+            timeout_seconds=1,
+            max_bytes=1024,
+        )
+    assert str(raised.value) == "feed request worker failed"
+    assert process.communicate_calls == 2
+
+
 @pytest.mark.parametrize(
     "worker_stdout",
     [
@@ -506,6 +533,22 @@ def test_protoagent_egress_policy_preserves_allowlist_and_private_ip_rules():
     )
     blocked = ProtoAgentEgressPolicy(root, [])("http://127.0.0.1/feed", timeout_seconds=1)
     assert blocked is not None and "private/internal" in blocked
+
+
+def test_protoagent_egress_policy_requires_complete_worker_schema(monkeypatch):
+    class MissingFieldProcess:
+        returncode = 0
+
+        def communicate(self, payload=None, timeout=None):
+            return '{"ok":true}', ""
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: MissingFieldProcess())
+    policy = ProtoAgentEgressPolicy(Path(__file__).parents[2] / "protoAgent", [])
+    with pytest.raises(FeedIntakeError, match="invalid data"):
+        policy("https://feeds.example/rss", timeout_seconds=1)
 
 
 def test_malformed_entry_url_records_parse_failure(tmp_path: Path):
