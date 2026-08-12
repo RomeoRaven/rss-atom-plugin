@@ -1,0 +1,22 @@
+id: rss_atom
+name: RSS / Atom Intake
+version: 0.1.0
+description: >-
+  Safe durable intake for operator-configured RSS and Atom feeds with bounded
+  refresh, normalized provenance, HTTP validators, and deduplication.
+enabled: false
+config_section: rss_atom
+config:
+  feeds: []
+  max_bytes: 262144
+  timeout_seconds: 15
+  max_entries_per_feed: 1000
+requires_pip:
+  - feedparser>=6.0.14,<7
+  - httpx>=0.27,<1
+capabilities:
+  network:
+    - configured RSS/Atom feed hosts
+  filesystem: scoped
+emits: []
+subscribes: []

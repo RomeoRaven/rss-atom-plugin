@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - uses: actions/checkout@v4
+        with:
+          repository: protoLabsAI/protoAgent
+          path: protoAgent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: plugin/requirements-dev.txt
+      - run: python -m pip install -r plugin/requirements-dev.txt
+      - run: ruff check .
+        working-directory: plugin
+      - run: ruff format --check .
+        working-directory: plugin
+      - run: pytest -q
+        working-directory: plugin
+        env:
+          PROTOAGENT_CHECKOUT: ${{ github.workspace }}/protoAgent
