@@ -234,6 +234,8 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
     assert view.status_code == 200
     assert 'id="category-selector"' in view.text
     assert "plugin-kit.css" in view.text
+    assert "grid-template-columns: minmax(0, 1fr)" in view.text
+    assert ".rail, .main { width: 100%; min-width: 0; }" in view.text
     data = client.get("/api/plugins/rss_atom/news", params={"category": "Technology"})
     assert data.status_code == 200
     assert data.json()["categories"] == [
