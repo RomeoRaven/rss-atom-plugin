@@ -64,7 +64,7 @@ fetch a remote catalogue, refresh a feed, or delete custom sources/articles.
 
 When a selected catalogue record changes URL, normal local data access performs an
 atomic SQLite provenance migration from an exact previous URL to the current URL.
-It moves validators, health, entries, and reader bodies and regenerates reader IDs.
+It moves validators, health, entries, and reader bodies while preserving stored reader IDs.
 It refuses an occupied destination and performs no network request. Opening or
 saving the selector does not instantiate storage or perform this migration.
 

@@ -397,6 +397,7 @@ def test_catalog_url_migration_preserves_validators_entries_and_reader_bodies_wi
     db_path = tmp_path / "feeds.db"
     transport = FixtureTransport({})
     intake = FeedIntake(db_path, transport, check_url=allow_public)
+    original_reader_id = "0" * 64
     with sqlite3.connect(db_path) as db:
         db.execute(
             "INSERT INTO feeds(url, etag, last_modified, last_status, last_error, last_checked, last_processed, last_inserted, last_duplicates) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -408,7 +409,7 @@ def test_catalog_url_migration_preserves_validators_entries_and_reader_bodies_wi
         )
         db.execute(
             "INSERT INTO reader_bodies VALUES(?, 'entry-1', ?, 1, '<h2>Preserved</h2><p>Reader body remains.</p>')",
-            (old_url, "0" * 64),
+            (old_url, original_reader_id),
         )
 
     result = intake.migrate_feed_url(old_url, new_url)
@@ -427,8 +428,20 @@ def test_catalog_url_migration_preserves_validators_entries_and_reader_bodies_wi
     listed = intake.recent_entries_with_reader(limit=1, feed_url=new_url)[0]
     assert listed["feed_url"] == new_url
     assert listed["has_reader"] is True
-    assert listed["reader_id"] != "0" * 64
-    assert intake.reader_entry(str(listed["reader_id"]))["reader_html"].startswith("<h2>Preserved")
+    assert listed["reader_id"] == original_reader_id
+    assert intake.reader_entry(original_reader_id)["reader_html"].startswith("<h2>Preserved")
+
+    refreshed_reader_text = "updated reader content " * 40
+    refreshed_body = f"""<rss version="2.0"><channel><item><guid>entry-1</guid><title>Preserved</title>
+    <link>https://news.example/1</link><pubDate>Wed, 12 Aug 2026 12:00:00 GMT</pubDate>
+    <description><![CDATA[<h2>Updated</h2><p>{refreshed_reader_text}</p>]]></description>
+    </item></channel></rss>""".encode()
+    transport.responses[new_url] = [Response(200, {}, refreshed_body)]
+    intake.refresh(new_url)
+    refreshed = intake.recent_entries_with_reader(limit=1, feed_url=new_url)[0]
+    assert refreshed["has_reader"] is True
+    assert refreshed["reader_id"] == original_reader_id
+    assert intake.reader_entry(original_reader_id)["reader_html"].startswith("<h2>Updated")
     with sqlite3.connect(db_path) as db:
         assert db.execute("SELECT count(*) FROM feeds WHERE url = ?", (old_url,)).fetchone()[0] == 0
         assert db.execute("SELECT count(*) FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0] == 0

@@ -492,15 +492,7 @@ class FeedIntake:
             if destination_exists or destination_entries or destination_bodies:
                 raise FeedIntakeError("feed URL migration destination already contains state")
             db.execute("UPDATE entries SET feed_url = ? WHERE feed_url = ?", (new_url, old_url))
-            bodies = db.execute(
-                "SELECT rowid, entry_id FROM reader_bodies WHERE feed_url = ?",
-                (old_url,),
-            ).fetchall()
-            for body in bodies:
-                db.execute(
-                    "UPDATE reader_bodies SET feed_url = ?, reader_id = ? WHERE rowid = ?",
-                    (new_url, _reader_id(new_url, body["entry_id"]), body["rowid"]),
-                )
+            db.execute("UPDATE reader_bodies SET feed_url = ? WHERE feed_url = ?", (new_url, old_url))
             if source_exists:
                 db.execute("UPDATE feeds SET url = ? WHERE url = ?", (new_url, old_url))
             return {"status": "migrated", "entries": source_entries, "reader_bodies": source_bodies}
@@ -655,11 +647,13 @@ class FeedIntake:
             ]
             existing_bodies = {
                 (row["feed_url"], row["entry_id"]): {
+                    "reader_id": row["reader_id"],
                     "content_version": row["content_version"],
                     "reader_html": row["reader_html"],
                 }
                 for row in db.execute(
-                    "SELECT feed_url, entry_id, content_version, reader_html FROM reader_bodies WHERE feed_url = ?",
+                    "SELECT feed_url, entry_id, reader_id, content_version, reader_html "
+                    "FROM reader_bodies WHERE feed_url = ?",
                     (feed_url,),
                 ).fetchall()
             }
@@ -692,8 +686,8 @@ class FeedIntake:
             for entry in body_candidates:
                 body = str(entry.get("reader_html") or "")
                 version = 1
+                previous = existing_bodies.get((feed_url, entry["entry_id"]))
                 if not body and entry["entry_id"] not in normalized_ids:
-                    previous = existing_bodies.get((feed_url, entry["entry_id"]))
                     if previous:
                         body = str(previous["reader_html"])
                         version = int(previous["content_version"])
@@ -702,7 +696,13 @@ class FeedIntake:
                 db.execute(
                     "INSERT INTO reader_bodies(feed_url, entry_id, reader_id, content_version, reader_html) "
                     "VALUES(?, ?, ?, ?, ?)",
-                    (feed_url, entry["entry_id"], _reader_id(feed_url, entry["entry_id"]), version, body),
+                    (
+                        feed_url,
+                        entry["entry_id"],
+                        str(previous["reader_id"]) if previous else _reader_id(feed_url, entry["entry_id"]),
+                        version,
+                        body,
+                    ),
                 )
                 bodies_written += 1
             db.execute(
@@ -815,7 +815,7 @@ class FeedIntake:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT entries.entry_id, entries.feed_url, entries.title, entries.link, entries.published, "
-                "entries.summary, reader_bodies.entry_id IS NOT NULL AS has_reader "
+                "entries.summary, reader_bodies.entry_id IS NOT NULL AS has_reader, reader_bodies.reader_id "
                 "FROM entries LEFT JOIN reader_bodies USING(feed_url, entry_id) "
                 f"{where} ORDER BY entries.rowid DESC LIMIT ?",
                 params,
@@ -825,9 +825,12 @@ class FeedIntake:
             item = dict(row)
             has_reader = bool(item.pop("has_reader"))
             summary = str(item.pop("summary"))
+            stored_reader_id = item.pop("reader_id")
             item["excerpt"] = _excerpt(summary)
             item["has_reader"] = has_reader
-            item["reader_id"] = _reader_id(str(item["feed_url"]), str(item["entry_id"]))
+            item["reader_id"] = (
+                str(stored_reader_id) if has_reader else _reader_id(str(item["feed_url"]), str(item["entry_id"]))
+            )
             result.append(item)
         return result
 
