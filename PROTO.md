@@ -35,6 +35,11 @@ refresh selections. News returns only bounded excerpts and reader availability;
 the structured body is available from a separate detail route. The agent cannot
 add, edit, remove, purge, or schedule feeds.
 
+The content-free reader HTML shell is auth-exempt so browser navigation can load
+it, but it waits for protoAgent's console handshake before making any request.
+The detail API containing title, metadata, canonical link, and sanitized body
+remains bearer-protected.
+
 ## Storage lifecycle
 
 SQLite lives under an instance-scoped plugin data directory. Schema creation is

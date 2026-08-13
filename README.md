@@ -70,6 +70,12 @@ preserves safe headings, paragraphs, lists, blockquotes, code, emphasis, and
 HTTP(S) links. Existing plain-text rows remain readable as excerpts and source
 links without migration-time network access.
 
+The reader's content-free HTML shell is anonymously loadable because normal
+browser navigation cannot carry protoAgent's bearer header. It waits for the
+console handshake before requesting article data. The separate reader API stays
+bearer-protected, so titles, links, metadata, and sanitized bodies are never
+served anonymously or placed in a URL.
+
 ## Optional feed ideas
 
 These examples are not installed automatically. Copy only the rows you want into

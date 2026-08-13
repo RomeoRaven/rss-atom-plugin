@@ -58,21 +58,30 @@
     const source = document.getElementById("reader-source");
     const status = document.getElementById("reader-status");
     const content = document.getElementById("reader-content");
+    let readerLoading = false;
     const fmt = (value) => { if (!value) return "Unknown time"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString([], {dateStyle:"medium",timeStyle:"short"}); };
-    async function loadReader() {
-      const response = await kit.apiFetch(`/api/plugins/rss_atom/reader/${encodeURIComponent(readerId)}`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Reader content is unavailable");
-      document.title = `${data.title || "Untitled"} · Reader`;
-      title.textContent = data.title || "Untitled";
-      meta.textContent = `${data.source} · ${fmt(data.published)}`;
-      if (data.link) { source.href = data.link; source.hidden = false; }
-      // Server contract: reader_html is stored only after the nh3 allowlist sanitizer
-      // strips active content, unsafe URLs, styles, IDs, classes, and event handlers.
-      content.innerHTML = data.reader_html;
-      status.textContent = "";
+    async function loadReader({ token } = {}) {
+      if (!token || readerLoading || content.dataset.loaded) return;
+      readerLoading = true;
+      try {
+        const response = await kit.apiFetch(`/api/plugins/rss_atom/reader/${encodeURIComponent(readerId)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Reader content is unavailable");
+        document.title = `${data.title || "Untitled"} · Reader`;
+        title.textContent = data.title || "Untitled";
+        meta.textContent = `${data.source} · ${fmt(data.published)}`;
+        if (data.link) { source.href = data.link; source.hidden = false; }
+        // Server contract: reader_html is stored only after the nh3 allowlist sanitizer
+        // strips active content, unsafe URLs, styles, IDs, classes, and event handlers.
+        content.innerHTML = data.reader_html;
+        content.dataset.loaded = "true";
+        status.textContent = "";
+      } catch (error) {
+        readerLoading = false;
+        status.textContent = error.message;
+      }
     }
-    loadReader().catch(error => { status.textContent = error.message; });
+    kit.initPluginView(loadReader);
   </script>
 </body>
 </html>

@@ -312,9 +312,6 @@ def _view_router():
 
     @router.get("/reader/{reader_id}")
     async def _reader(reader_id: str):
-        detail = await asyncio.to_thread(_intake().reader_entry, reader_id)
-        if detail is None:
-            raise HTTPException(status_code=404, detail="Reader content is unavailable")
         try:
             source = Path(__file__).with_name("reader_view.html").read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
