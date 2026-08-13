@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "catalog_version": "2026.08.0",
+  "feeds": [
+    {
+      "id": "bloomberg-markets",
+      "category": "Business",
+      "name": "Bloomberg",
+      "url": "https://www.bloomberg.com/feeds/markets/news.rss",
+      "previous_urls": [
+        "https://feeds.bloomberg.com/markets/news.rss"
+      ]
+    },
+    {
+      "id": "cnbc-top-news",
+      "category": "Business",
+      "name": "CNBC",
+      "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+      "previous_urls": []
+    },
+    {
+      "id": "federal-reserve-press",
+      "category": "Business",
+      "name": "Federal Reserve",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "financial-times-international",
+      "category": "Business",
+      "name": "Financial Times",
+      "url": "https://www.ft.com/rss/home/international",
+      "previous_urls": [
+        "https://www.ft.com/?format=rss"
+      ]
+    },
+    {
+      "id": "marketwatch-top-stories",
+      "category": "Business",
+      "name": "MarketWatch",
+      "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+      "previous_urls": [
+        "http://feeds.marketwatch.com/marketwatch/topstories/",
+        "https://feeds.marketwatch.com/marketwatch/topstories/"
+      ]
+    },
+    {
+      "id": "wall-street-journal-world",
+      "category": "Business",
+      "name": "Wall Street Journal",
+      "url": "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "devto",
+      "category": "Developer",
+      "name": "Dev.to",
+      "url": "https://dev.to/feed",
+      "previous_urls": [],
+      "max_feed_size_kib": 512
+    },
+    {
+      "id": "github-blog",
+      "category": "Developer",
+      "name": "GitHub Blog",
+      "url": "https://github.blog/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "google-research",
+      "category": "Developer",
+      "name": "Google Research",
+      "url": "https://research.google/blog/rss/",
+      "previous_urls": []
+    },
+    {
+      "id": "hacker-news",
+      "category": "Developer",
+      "name": "Hacker News",
+      "url": "https://news.ycombinator.com/rss",
+      "previous_urls": []
+    },
+    {
+      "id": "hermes-agent-releases",
+      "category": "Developer",
+      "name": "Hermes Agent releases",
+      "url": "https://github.com/NousResearch/hermes-agent/releases.atom",
+      "previous_urls": [],
+      "max_feed_size_kib": 1280,
+      "max_items_per_refresh": 10
+    },
+    {
+      "id": "simon-willison",
+      "category": "Developer",
+      "name": "Simon Willison",
+      "url": "https://simonwillison.net/atom/everything/",
+      "previous_urls": []
+    },
+    {
+      "id": "stack-overflow-blog",
+      "category": "Developer",
+      "name": "Stack Overflow Blog",
+      "url": "https://stackoverflow.blog/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "protoagent-releases",
+      "category": "Developer",
+      "name": "Upstream protoAgent releases",
+      "url": "https://github.com/protoLabsAI/protoAgent/releases.atom",
+      "previous_urls": [],
+      "max_items_per_refresh": 10
+    },
+    {
+      "id": "nasa-news",
+      "category": "Science",
+      "name": "NASA",
+      "url": "https://www.nasa.gov/news-release/feed/",
+      "previous_urls": [
+        "https://www.nasa.gov/rss/dyn/breaking_news.rss"
+      ]
+    },
+    {
+      "id": "nature",
+      "category": "Science",
+      "name": "Nature",
+      "url": "https://www.nature.com/nature.rss",
+      "previous_urls": [
+        "http://feeds.nature.com/nature/rss/current",
+        "https://feeds.nature.com/nature/rss/current"
+      ]
+    },
+    {
+      "id": "science-daily",
+      "category": "Science",
+      "name": "ScienceDaily",
+      "url": "https://www.sciencedaily.com/rss/all.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "space-com",
+      "category": "Science",
+      "name": "Space.com",
+      "url": "https://www.space.com/feeds.xml",
+      "previous_urls": [
+        "https://www.space.com/feeds/all"
+      ],
+      "max_feed_size_kib": 1024
+    },
+    {
+      "id": "krebs-on-security",
+      "category": "Security",
+      "name": "Krebs on Security",
+      "url": "https://krebsonsecurity.com/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "ars-technica",
+      "category": "Technology",
+      "name": "Ars Technica",
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "previous_urls": []
+    },
+    {
+      "id": "cnet-news",
+      "category": "Technology",
+      "name": "CNET",
+      "url": "https://www.cnet.com/rss/news/",
+      "previous_urls": []
+    },
+    {
+      "id": "engadget",
+      "category": "Technology",
+      "name": "Engadget",
+      "url": "https://www.engadget.com/rss.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "gizmodo",
+      "category": "Technology",
+      "name": "Gizmodo",
+      "url": "https://gizmodo.com/feed",
+      "previous_urls": [
+        "https://gizmodo.com/rss"
+      ]
+    },
+    {
+      "id": "mit-technology-review",
+      "category": "Technology",
+      "name": "MIT Technology Review",
+      "url": "https://www.technologyreview.com/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "techcrunch",
+      "category": "Technology",
+      "name": "TechCrunch",
+      "url": "https://techcrunch.com/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "the-verge",
+      "category": "Technology",
+      "name": "The Verge",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "wired",
+      "category": "Technology",
+      "name": "Wired",
+      "url": "https://www.wired.com/feed/rss",
+      "previous_urls": []
+    },
+    {
+      "id": "zdnet",
+      "category": "Technology",
+      "name": "ZDNet",
+      "url": "https://www.zdnet.com/news/rss.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "al-jazeera",
+      "category": "World",
+      "name": "Al Jazeera",
+      "url": "https://www.aljazeera.com/xml/rss/all.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "bbc-news",
+      "category": "World",
+      "name": "BBC News",
+      "url": "https://feeds.bbci.co.uk/news/rss.xml",
+      "previous_urls": [
+        "http://feeds.bbci.co.uk/news/rss.xml"
+      ]
+    },
+    {
+      "id": "icij",
+      "category": "World",
+      "name": "ICIJ",
+      "url": "https://www.icij.org/feed/",
+      "previous_urls": []
+    },
+    {
+      "id": "new-york-times-top-stories",
+      "category": "World",
+      "name": "New York Times",
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "npr-news",
+      "category": "World",
+      "name": "NPR",
+      "url": "https://feeds.npr.org/1001/rss.xml",
+      "previous_urls": []
+    },
+    {
+      "id": "the-guardian-world",
+      "category": "World",
+      "name": "The Guardian",
+      "url": "https://www.theguardian.com/world/rss",
+      "previous_urls": []
+    }
+  ]
+}

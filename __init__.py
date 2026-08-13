@@ -14,8 +14,10 @@ from langchain_core.tools import tool
 from markdown_it import MarkdownIt
 
 if __package__:
+    from .feed_catalog import FeedCatalog, FeedCatalogError, parse_feed_rows
     from .feed_intake import FeedIntake, FeedIntakeError, HttpxTransport, ProtoAgentEgressPolicy
 else:  # Standalone pytest imports the root entry as top-level ``__init__``.
+    from feed_catalog import FeedCatalog, FeedCatalogError, parse_feed_rows
     from feed_intake import FeedIntake, FeedIntakeError, HttpxTransport, ProtoAgentEgressPolicy
 
 
@@ -25,6 +27,12 @@ def _empty_config() -> dict[str, Any]:
 
 _config_provider: Callable[[], dict[str, Any]] = _empty_config
 _transport = HttpxTransport()
+_catalog = (
+    FeedCatalog.load(Path(__file__).with_name("feed_catalog.json"))
+    if Path(__file__).with_name("feed_catalog.json").exists()
+    else FeedCatalog(version="unreleased", feeds=[])
+)
+_apply_settings: Callable[[dict[str, Any]], tuple[bool, list[str]]] | None = None
 _markdown: Any = MarkdownIt("commonmark", {"html": False})
 
 
@@ -68,61 +76,10 @@ def _feed_override(value: Any, *, label: str, maximum: int) -> int | None:
 
 
 def _feeds() -> list[dict[str, Any]]:
-    raw = _config().get("feeds", [])
-    if not isinstance(raw, list):
-        raise ValueError("rss_atom.feeds must be a list")
-    feeds: list[dict[str, Any]] = []
-    names: set[str] = set()
-    urls: set[str] = set()
-    for item in raw:
-        if isinstance(item, str):
-            if "|" not in item:
-                raise ValueError(
-                    "each feed row must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
-                )
-            parts = [part.strip() for part in item.split("|")]
-            if len(parts) == 2:
-                category, name, url = "Uncategorized", *parts
-                max_feed_size_kib = max_items_per_refresh = None
-            elif len(parts) == 3:
-                category, name, url = parts
-                max_feed_size_kib = max_items_per_refresh = None
-            elif len(parts) == 5:
-                category, name, url, raw_size, raw_items = parts
-                max_feed_size_kib = _feed_override(raw_size, label="size override in KiB", maximum=2048)
-                max_items_per_refresh = _feed_override(raw_items, label="items-per-refresh override", maximum=100)
-            else:
-                raise ValueError(
-                    "each feed row must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
-                )
-        elif isinstance(item, dict):
-            category = str(item.get("category") or "Uncategorized").strip()
-            name = str(item.get("name") or "").strip()
-            url = str(item.get("url") or "").strip()
-            max_feed_size_kib = _feed_override(
-                item.get("max_feed_size_kib"), label="size override in KiB", maximum=2048
-            )
-            max_items_per_refresh = _feed_override(
-                item.get("max_items_per_refresh"), label="items-per-refresh override", maximum=100
-            )
-        else:
-            raise ValueError(
-                "each configured feed must use: Category | Name | URL | Max size KiB | Items per refresh or Name | URL"
-            )
-        if not category or not name or not url:
-            raise ValueError("each configured feed requires non-empty category, name, and url")
-        key = name.casefold()
-        if key in names or url in urls:
-            raise ValueError("configured feed names and URLs must be unique")
-        names.add(key)
-        urls.add(url)
-        feed: dict[str, Any] = {"category": category, "name": name, "url": url}
-        if max_feed_size_kib is not None:
-            feed["max_feed_size_kib"] = max_feed_size_kib
-        if max_items_per_refresh is not None:
-            feed["max_items_per_refresh"] = max_items_per_refresh
-        feeds.append(feed)
-    return sorted(feeds, key=lambda feed: (feed["category"].casefold(), feed["name"].casefold(), feed["url"]))
+    try:
+        return _catalog.resolve(_config())
+    except FeedCatalogError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _category_feeds(category: str) -> list[dict[str, Any]]:
@@ -167,7 +124,7 @@ def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
         Path(egress.__file__).resolve().parents[1],
         egress.allowed_hosts(),
     )
-    return FeedIntake(
+    intake = FeedIntake(
         _data_dir() / "feeds.db",
         _transport,
         check_url=egress_policy,
@@ -176,6 +133,15 @@ def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
         max_entries_per_feed=max_entries,
         max_items_per_refresh=max_items,
     )
+    selected_feeds = [feed] if feed else _feeds()
+    for selected_feed in selected_feeds:
+        if not selected_feed.get("catalogue_id"):
+            continue
+        for old_url in _catalog.aliases_for(str(selected_feed["catalogue_id"])):
+            result = intake.migrate_feed_url(old_url, str(selected_feed["url"]))
+            if result["status"] == "migrated":
+                break
+    return intake
 
 
 def _json(value: Any) -> str:
@@ -278,6 +244,14 @@ def _view_router():
     async def _view():
         return HTMLResponse(Path(__file__).with_name("news_view.html").read_text(encoding="utf-8"))
 
+    @router.get("/sources")
+    async def _sources():
+        try:
+            source = Path(__file__).with_name("sources_view.html").read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise HTTPException(status_code=404, detail="Source selector is not bundled") from exc
+        return HTMLResponse(source)
+
     @router.get("/help")
     async def _help():
         try:
@@ -325,6 +299,46 @@ def _data_router():
     from fastapi import APIRouter, HTTPException
 
     router = APIRouter()
+
+    @router.get("/catalog")
+    async def _catalog_payload():
+        try:
+            return _catalog.public_payload(_config())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
+
+    @router.post("/catalog")
+    async def _save_catalog(payload: dict[str, Any]):
+        if _apply_settings is None:
+            raise HTTPException(status_code=503, detail="protoAgent settings service is unavailable")
+        candidate = {
+            **_config(),
+            "catalogue_configured": True,
+            "selected_feed_ids": payload.get("selected_feed_ids", []),
+            "catalogue_overrides": payload.get("catalogue_overrides", {}),
+            "custom_feeds": payload.get("custom_feeds", []),
+        }
+        try:
+            resolved = _catalog.resolve(candidate)
+            custom_rows = parse_feed_rows(payload.get("custom_feeds", []))
+            if len(resolved) != len(candidate["selected_feed_ids"]) + len(custom_rows):
+                raise FeedCatalogError("selected and custom feeds must be unique")
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
+        patch = {
+            "rss_atom": {
+                "catalogue_configured": True,
+                "selected_feed_ids": list(candidate["selected_feed_ids"]),
+                "catalogue_overrides": dict(candidate["catalogue_overrides"]),
+                "custom_feeds": custom_rows,
+            }
+        }
+        ok, messages = await asyncio.to_thread(_apply_settings, patch)
+        if not ok:
+            detail = "; ".join(messages) or "Could not save sources"
+            status_code = 503 if detail == "protoAgent settings host is unavailable" else 400
+            raise HTTPException(status_code=status_code, detail=detail)
+        return {"ok": True, "messages": messages}
 
     @router.get("/news")
     async def _news(category: str = "", source: str = ""):
@@ -432,9 +446,21 @@ def rss_feed_status(name: str) -> str:
 
 
 def register(registry) -> None:
-    """Register four bounded tools plus a user-driven News view; no background surface is created."""
-    global _config_provider
+    """Register four bounded tools plus user-driven News/source views; no background surface is created."""
+    global _apply_settings, _config_provider
     _config_provider = registry.live_config
+
+    def _late_apply_settings(patch: dict[str, Any]) -> tuple[bool, list[str]]:
+        handler = registry.host.apply_settings
+        if not callable(handler):
+            return False, ["protoAgent settings host is unavailable"]
+        result = handler(patch)
+        if not isinstance(result, tuple) or len(result) != 2:
+            return False, ["protoAgent settings host returned an invalid result"]
+        ok, messages = result
+        return bool(ok), [str(message) for message in messages] if isinstance(messages, list) else [str(messages)]
+
+    _apply_settings = _late_apply_settings
     registry.register_tools([rss_list_feeds, rss_refresh_feed, rss_recent_entries, rss_feed_status])
     registry.register_router(_view_router(), prefix="/plugins/rss_atom")
     registry.register_router(_data_router(), prefix="/api/plugins/rss_atom")

@@ -1,27 +1,99 @@
 # RSS / Atom Intake for protoAgent
 
-A small, durable intake plugin for operator-configured RSS 2.0 and Atom feeds.
-It safely refreshes one named feed on demand, normalizes entries with source
-provenance, persists HTTP validators and deduplication state, and lets the agent
-query recent entries and refresh status.
+A manual, bounded RSS 2.0 and Atom reader for protoAgent. It provides a maintained
+feed catalogue, custom sources, durable feed health, compact News cards, and a
+strictly sanitized structured reader. It never polls, schedules, or refreshes in
+the background.
 
-## Quick start
+Current release: **v0.9.0 beta**. Minimum protoAgent: **0.135.0**.
 
-1. Open **Plugins → RSS / Atom Intake → Configure**.
-2. Add one feed per row as `Category | Name | URL`. Optional per-feed limits use
-   `Category | Name | URL | Max size KiB | Items per refresh`.
-3. Open **News** from the left rail and choose a category.
-4. Click a feed name to show only that source's stored articles.
-5. Use the eye to include or skip that source for bulk **Refresh selected**.
-6. Use the adjacent refresh icon to fetch only that source immediately.
-7. Click **Refresh selected** only when you want to fetch every included feed in
-   the category.
-8. Use **Read here** for long structured entries or **Open source** to leave the
+## Install
+
+Only install plugins you trust. protoAgent plugins run in-process with the agent.
+
+### Console
+
+1. Open **Plugins → Local** and choose **Download**.
+2. Enter `https://github.com/RomeoRaven/rss-atom-plugin` and release ref `v0.9.0`.
+3. Review the manifest and capabilities, then install.
+4. Install the plugin's declared dependencies when protoAgent offers that action.
+5. Enable **RSS / Atom Intake**. Restart if protoAgent recommends it for the new
+   console views.
+6. Open **News → Manage sources**.
+
+### CLI
+
+```sh
+protoagent plugin install https://github.com/RomeoRaven/rss-atom-plugin --ref v0.9.0
+protoagent plugin install-deps rss_atom
+```
+
+CLI installation fetches and pins code but does not enable it. Add `rss_atom` to
+`plugins.enabled` through your normal protoAgent configuration path, then restart
+or reload the instance as appropriate.
+
+## Choose sources
+
+Open **News → Manage sources**. The selector groups maintained feeds by category,
+supports search and checkboxes, and keeps custom feeds in a separate editor.
+Saving source choices changes configuration only. It does not download a feed,
+create reader content, or alter stored articles.
+
+Custom rows use:
+
+```text
+Category | Name | URL | optional max size KiB | optional items per refresh
+```
+
+For example:
+
+```text
+Community | Example project | https://example.com/releases.atom | 512 | 20
+```
+
+Feed-size overrides accept 1–2048 KiB. Item-count overrides accept 1–100; 100 is
+the absolute per-source processing ceiling. Omitted values inherit the global
+settings.
+
+### Existing v0.8.x configurations
+
+The selector proposes a safe migration from legacy `feeds` rows:
+
+- an exact match to a maintained feed's current or previous URL becomes that
+  catalogue selection;
+- unmatched rows remain custom feeds with their per-feed bounds;
+- legacy rows remain in configuration as compatibility input and are not erased;
+- saving the selector activates `selected_feed_ids` plus `custom_feeds`;
+- saving, loading, installing, or updating never refreshes a feed.
+
+Maintained feeds use immutable catalogue IDs. If a later plugin release corrects
+a selected feed URL, the plugin moves that feed's local validators, health,
+articles, and reader bodies to the replacement URL on normal local data access.
+That migration is atomic and makes no network request. New catalogue feeds are
+never selected automatically. Historical HTTP aliases may appear in catalogue
+metadata solely to recognize old configuration/state; the plugin never fetches
+those aliases as maintained current sources.
+
+## Read and refresh
+
+1. Open **News** and choose a category.
+2. Click a source name to filter stored articles.
+3. Use the eye to include or skip that source for bulk **Refresh selected**.
+4. Use the adjacent refresh icon to fetch only that source, regardless of its eye
+   state.
+5. Click **Refresh selected** only when you want to fetch the included sources in
+   that category.
+6. Use **Read here** for long structured entries or **Open source** to leave the
    plugin. Short and link-only entries remain source-first.
 
-Adding a row configures a source; it does not add or refresh articles by itself.
-Removing a row stops it appearing in News but does not purge previously stored
-entries from the plugin database.
+The eye setting is browser-local and controls only the next bulk/category refresh.
+It never changes source configuration or deletes articles. Every network refresh
+is explicit and operator-triggered.
+
+Selecting one source shows durable health: last-check time, working/error state,
+processed/new/already-stored counts, stored article count, and effective limits.
+A successful refresh may insert zero articles when every returned item is already
+stored.
 
 ## Tools
 
@@ -30,164 +102,131 @@ entries from the plugin database.
 - `rss_recent_entries(limit=20, name="", category="")`
 - `rss_feed_status(name)`
 
-Feeds and bounded intake settings are operator configuration, not agent-mutable
-state. In protoAgent, open **Plugins → RSS / Atom Intake → Configure**. Add one
-feed per row using `Category | Name | URL`, for example:
+The agent can list, query, refresh one configured feed by name, and report health.
+It cannot add/remove sources, change the catalogue, purge data, schedule work, or
+refresh automatically.
 
-```text
-Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom
-```
+## Reader behavior
 
-To override one source without changing the global defaults, add both optional
-columns. Either optional value may be blank:
+News shows at most 400 characters and five visual lines per card. It never sends a
+complete structured article body in the scrolling-list API. **Read here** appears
+only when an explicit refresh stored meaningful structured content.
 
-```text
-Developer | Hermes Agent releases | https://github.com/NousResearch/hermes-agent/releases.atom | 1280 | 10
-Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom | | 10
-```
+The reader preserves safe headings, paragraphs, lists, blockquotes, code,
+emphasis, and absolute HTTP(S) links. Existing plain-text rows remain readable as
+excerpts and source links without migration-time network access.
 
-Feed-size overrides accept 1–2048 KiB. Item-count overrides accept 1–100; 100 is
-an absolute per-source ceiling. Existing `Category | Name | URL` and `Name | URL`
-rows remain valid, inherit global defaults, and legacy two-field rows appear under
-**Uncategorized**.
-Enabled plugins also contribute a **News** rail view. Its category selector
-filters configured sources and stored articles. Within a category, **All feeds**
-or a feed-name button filters stored results by source. The eye button independently
-includes or skips that feed for bulk **Refresh selected**; crossed-out eyes are
-skipped. The separate refresh icon refreshes only that source, regardless of its
-eye state. Those bulk-refresh choices persist in that browser and never delete or
-alter configured feeds. Every refresh remains explicit and operator-triggered.
-Selecting one source also shows durable health: last-check time, whether the
-source worked or failed, new/already-stored counts, stored article count, and the
-effective size/item limits. This distinguishes an untested source, no new items,
-an unchanged source, an empty source, and a failed refresh.
+The reader's content-free HTML shell can load without an Authorization header so
+normal browser navigation works. It waits for protoAgent's authenticated console
+handshake before requesting article data. The separate reader API remains
+bearer-protected; titles, links, metadata, and sanitized bodies are never placed
+in URLs or served anonymously.
 
-News never renders a complete article body in the scrolling list. It shows a
-bounded plain-text excerpt (at most 400 characters and five visual lines), keeps
-the canonical source action visible, and offers **Read here** only when an
-explicit refresh stored meaningful structured content. The separate reader
-preserves safe headings, paragraphs, lists, blockquotes, code, emphasis, and
-HTTP(S) links. Existing plain-text rows remain readable as excerpts and source
-links without migration-time network access.
+## Global settings
 
-The reader's content-free HTML shell is anonymously loadable because normal
-browser navigation cannot carry protoAgent's bearer header. It waits for the
-console handshake before requesting article data. The separate reader API stays
-bearer-protected, so titles, links, metadata, and sanitized bodies are never
-served anonymously or placed in a URL.
+The generic plugin Configure dialog controls:
 
-## Optional feed ideas
+- items processed per fetched document: 1–100, default 100;
+- recent items returned when no tool limit is supplied: 1–100, default 20;
+- durable entries retained per feed: 1–10000, default 1000;
+- maximum decompressed feed size: 1–2048 KiB, default 256 KiB;
+- total refresh timeout: 1–60 seconds, default 15 seconds.
 
-These examples are not installed automatically. Copy only the rows you want into
-the **Feeds** setting, then use News to refresh them explicitly.
-
-```text
-Developer | Google Developers | https://developers.googleblog.com/feeds/posts/default?alt=rss
-Science | CDC Emerging Infectious Diseases | https://wwwnc.cdc.gov/eid/rss/ahead-of-print.xml
-```
-
-Feed payloads and server behavior can change. If an example later fails, check
-the source's official feed page and the troubleshooting section below before
-raising intake limits.
-
-The generic plugin settings dialog also controls:
-
-- items processed from each fetched document (1–100; default 100);
-- recent items returned when no tool limit is supplied (1–100; default 20);
-- durable entries retained per feed (1–10000; default 1000);
-- maximum decompressed feed size in KiB (1–2048; default 256);
-- total refresh timeout in seconds (1–60; default 15).
-
-The size setting applies to one decompressed RSS/Atom response, not to the plugin
-package, configured-feed count, category size, or durable database. The fetcher
-checks a declared response size when available and otherwise stops streaming as
-soon as the configured ceiling is crossed. Increase it only for a trusted feed
-whose current payload genuinely requires more room.
-
-The object form remains accepted for existing config files:
-
-```yaml
-rss_atom:
-  feeds:
-    - category: Technology
-      name: Example
-      url: https://example.com/feed.xml
-  max_items_per_refresh: 100
-  default_recent_items: 20
-  max_feed_size_kib: 256
-  timeout_seconds: 15
-  max_entries_per_feed: 1000
-plugins:
-  enabled: [rss_atom]
-```
-
-State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
-`RSS_ATOM_DATA_DIR` to choose another instance-scoped location.
-
-Existing configurations that still define `max_bytes` remain effective until
-`max_feed_size_kib` is explicitly set; the newer KiB setting takes precedence.
+Legacy `max_bytes` remains effective until `max_feed_size_kib` is explicitly set;
+the KiB setting then takes precedence. State defaults to
+`$PROTOAGENT_HOME/rss_atom/feeds.db`; `RSS_ATOM_DATA_DIR` may select another
+instance-scoped location.
 
 ## Safety and lifecycle
 
-- pA `security.egress.check_url` runs before every request and redirect.
+- protoAgent `security.egress.check_url` runs before every request and redirect.
 - Redirects are manual and capped at three; HTTPS downgrade is refused.
 - Cross-origin redirects do not receive stored ETag/Last-Modified validators.
-- The configured timeout is one total refresh deadline across all redirect hops.
-- Decompressed response bytes, query size, and stored entries per feed are bounded.
-- Malformed feeds and request errors commit no partial entries and expose bounded error status.
-- Plain-text fallback is UTF-8 bounded to 64 KiB and list excerpts to 400 characters.
-- Optional reader HTML is sanitized by `nh3`/Ammonia with a strict structural
-  allowlist. Scripts, styles, SVG, forms, media/embeds, inline styles/classes/IDs,
-  event handlers, relative links, and non-HTTP(S) URL schemes are removed.
-- Reader bodies are independently capped at 128 KiB, 5,000 elements, 1,000 links,
-  and the newest 20 meaningful bodies per feed by publication time. Entries
-  without a usable publication time retain stable feed/storage order. Metadata
-  retention remains at the configured value (default 1,000 entries per feed).
-- New reader bodies are created only by explicit later refreshes. No migration,
-  configuration change, page load, or reader action fetches a feed or source page.
-- Refreshes are operator-triggered and serialized in-process.
-- Disable stops all activity because there is no background process.
-- Disable/uninstall retains the SQLite data. No purge tool exists in this slice.
+- The timeout is one total deadline across DNS, redirects, headers, and body.
+- Decompressed response size, items processed, and durable entries are bounded.
+- Malformed feeds and request failures commit no partial articles.
+- Plain-text fallback is UTF-8 bounded to 64 KiB; list excerpts are 400 characters.
+- Reader HTML is sanitized by `nh3`/Ammonia with a strict structural allowlist.
+  Scripts, styles, SVG, forms, media/embeds, event handlers, relative links, and
+  non-HTTP(S) schemes are removed.
+- Reader bodies are capped at 128 KiB, 5,000 elements, 1,000 links, and the newest
+  20 meaningful bodies per feed. Metadata retention remains independent.
+- New reader bodies are created only by explicit refresh. Configuration, page
+  loads, catalogue migration, installation, and update do not fetch feeds.
+- Refreshes are serialized in-process. Disable stops all activity because there is
+  no background process.
+- Disable/uninstall retains SQLite data unless the operator deliberately purges
+  plugin state through protoAgent.
+
+## Update and rollback
+
+A plugin installed from release tag `v0.9.0` is pinned by protoAgent to the resolved
+commit. When a later semver release is available, use the plugin's **Update**
+control. Review its release notes before updating; a console view update may need
+a protoAgent restart to replace already-mounted routes.
+
+To stay on v0.9.0, keep the recorded tag/commit pin. To roll back, reinstall the
+previous trusted release ref. Configuration and SQLite state are retained by a
+normal uninstall/reinstall; do not use purge unless you intend to delete plugin
+configuration.
+
+Each plugin release must update or deliberately reaffirm both
+`protoagent.plugin.yaml:min_protoagent_version` and `compatibility.json`. CI fails
+when those records disagree. v0.9.0 is tested against protoAgent 0.135.0.
 
 ## Troubleshooting
 
-### Feed exceeds the configured size limit
+### A feed exceeds its size limit
 
-Confirm that the URL is an RSS/Atom document rather than a full web page. If it
-is a trusted feed and its decompressed XML is legitimately larger than the
-current ceiling, set a conservative per-feed size override in its **Feeds** row. This preserves the
-smaller global default for every other source. The accepted range is 1–2048 KiB.
+Confirm the URL is an RSS/Atom document, not a normal web page. For a trusted feed
+whose decompressed XML legitimately exceeds the default, add a conservative
+per-feed override in **Manage sources → Custom feeds**. Do not raise the global
+limit merely for one source.
 
-### Feed request is blocked or fails
+### A feed is blocked or fails
 
 The plugin applies protoAgent's egress policy to the original URL and every
-redirect. A source may also reject automated readers, return a challenge page,
-redirect from HTTPS to HTTP, or exceed the total timeout. The error is recorded
-for that feed; no partial entries are committed.
+redirect. A source may reject automated readers, return a challenge page, redirect
+to HTTP, serve malformed XML, or exceed the total timeout. The failure is recorded
+for that source; no partial articles are committed.
 
 ### Refresh succeeds but no articles appear
 
-Select the source and read its durable health panel. It reports whether the source
-has never been checked, worked with no new items, returned no entries, was
-unchanged, or failed. The eye only controls bulk refresh; the source's refresh
-icon always tests that source directly. A successful refresh can insert zero
-articles when every returned item is already stored.
-
-## Non-goals
-
-No crawler, browser renderer, web search, News editorial policy, scheduler,
-background polling, notifications, publishing, standalone console replacement,
-feed add/remove tool, credentials, remediation, or protoAgent core change.
+Select the source and read its health panel. It distinguishes never checked,
+unchanged, empty, no new items, and failed. The eye controls only bulk refresh;
+the source refresh icon always tests that source directly.
 
 ## Platform evidence
 
-The CI matrix runs on Linux, native Windows, and macOS. Each job clones current
-protoAgent, loads this repository through its real plugin loader, invokes the
-configured-feed/list/status/recent/refresh tool paths with offline fixtures, and
-runs the parser/storage/security tests. No live external feed is polled.
+CI runs on Linux, native Windows, and macOS. Each job clones current protoAgent,
+loads this repository through its real plugin loader, exercises configuration,
+list/status/recent/refresh paths with offline fixtures, and runs parser, storage,
+migration, catalogue, and security tests. CI never polls live external feeds.
 
-This repository is an implementation candidate, not a release. Installation,
-live feed configuration, deployment, and publishing remain separate decisions.
+The v0.9.0 beta release additionally records bounded live validation for every
+catalogue candidate and browser acceptance of the selector on Linux. Native CI is
+not a claim of full Windows/macOS desktop browser acceptance.
+
+## Post-beta roadmap
+
+These are deliberately outside the stock v0.9.0 beta:
+
+- explicit read/unread state: GitHub issue #2;
+- save/clip to a knowledge or documents destination;
+- reusable send/share actions.
+
+The beta also excludes crawlers, source-page extraction, web search, scheduling,
+background polling, notifications, publishing, credentials, and protoAgent core
+changes.
+
+## Support and security
+
+Use GitHub issues for reproducible non-security defects and feed catalogue
+corrections. Include the plugin version, protoAgent version, operating system,
+source name (not private credentials), expected behavior, and bounded error text.
+
+Do not disclose vulnerabilities publicly. Follow the repository's inherited
+security policy at `https://github.com/RomeoRaven/rss-atom-plugin/security/policy`.
 
 ## License
 

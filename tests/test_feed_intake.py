@@ -391,6 +391,77 @@ def test_explicit_refresh_removes_stale_reader_when_same_entry_becomes_source_on
     assert intake.reader_entry(str(second["reader_id"])) is None
 
 
+def test_catalog_url_migration_preserves_validators_entries_and_reader_bodies_without_network(tmp_path: Path):
+    old_url = "https://feeds.example/old"
+    new_url = "https://feeds.example/current"
+    db_path = tmp_path / "feeds.db"
+    transport = FixtureTransport({})
+    intake = FeedIntake(db_path, transport, check_url=allow_public)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "INSERT INTO feeds(url, etag, last_modified, last_status, last_error, last_checked, last_processed, last_inserted, last_duplicates) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (old_url, '"v1"', "Tue, 11 Aug 2026 13:01:00 GMT", "updated", "", "2026-08-12T18:00:00Z", 3, 2, 1),
+        )
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'entry-1', 'Preserved', 'https://news.example/1', '2026-08-12T12:00:00Z', 'Summary')",
+            (old_url,),
+        )
+        db.execute(
+            "INSERT INTO reader_bodies VALUES(?, 'entry-1', ?, 1, '<h2>Preserved</h2><p>Reader body remains.</p>')",
+            (old_url, "0" * 64),
+        )
+
+    result = intake.migrate_feed_url(old_url, new_url)
+
+    assert result == {"status": "migrated", "entries": 1, "reader_bodies": 1}
+    assert transport.calls == []
+    assert intake.feed_status(old_url)["status"] == "never_refreshed"
+    assert intake.feed_status(new_url) | {"checked_at": "<timestamp>"} == {
+        "status": "updated",
+        "error": "",
+        "checked_at": "<timestamp>",
+        "processed": 3,
+        "inserted": 2,
+        "duplicates": 1,
+    }
+    listed = intake.recent_entries_with_reader(limit=1, feed_url=new_url)[0]
+    assert listed["feed_url"] == new_url
+    assert listed["has_reader"] is True
+    assert listed["reader_id"] != "0" * 64
+    assert intake.reader_entry(str(listed["reader_id"]))["reader_html"].startswith("<h2>Preserved")
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM feeds WHERE url = ?", (old_url,)).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM reader_bodies WHERE feed_url = ?", (old_url,)).fetchone()[0] == 0
+
+
+def test_catalog_url_migration_refuses_destination_conflict_without_partial_changes(tmp_path: Path):
+    old_url = "https://feeds.example/old"
+    new_url = "https://feeds.example/current"
+    db_path = tmp_path / "feeds.db"
+    intake = FeedIntake(db_path, FixtureTransport({}), check_url=allow_public)
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO feeds(url, etag) VALUES(?, 'old')", (old_url,))
+        db.execute("INSERT INTO feeds(url, etag) VALUES(?, 'new')", (new_url,))
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'same', 'Old', '', '', 'old')",
+            (old_url,),
+        )
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'same', 'New', '', '', 'new')",
+            (new_url,),
+        )
+
+    with pytest.raises(FeedIntakeError, match="destination already contains state"):
+        intake.migrate_feed_url(old_url, new_url)
+
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT etag FROM feeds WHERE url = ?", (old_url,)).fetchone()[0] == "old"
+        assert db.execute("SELECT etag FROM feeds WHERE url = ?", (new_url,)).fetchone()[0] == "new"
+        assert db.execute("SELECT summary FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0] == "old"
+        assert db.execute("SELECT summary FROM entries WHERE feed_url = ?", (new_url,)).fetchone()[0] == "new"
+
+
 def test_atom_revalidation_deduplicates_and_304_preserves_entries(tmp_path: Path):
     url = "https://feeds.example/atom"
     transport = FixtureTransport(

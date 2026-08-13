@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from feed_catalog import FeedCatalog
 from feed_intake import Response
 
 PLUGIN_ROOT = Path(__file__).parents[1]
@@ -93,6 +95,8 @@ def test_current_protoagent_loads_four_tools_and_invokes_offline_paths(tmp_path,
 def test_manifest_declares_scoped_state_network_and_no_background_surface():
     manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
     assert manifest["id"] == "rss_atom"
+    assert manifest["version"] == "0.9.0"
+    assert manifest["min_protoagent_version"] == "0.135.0"
     assert manifest["enabled"] is False
     assert manifest["repository"] == "https://github.com/RomeoRaven/rss-atom-plugin"
     assert manifest["homepage"] == "https://agent.protolabs.studio"
@@ -134,7 +138,11 @@ def test_bundled_readme_is_exposed_as_the_manifest_help_page(tmp_path, monkeypat
     manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
 
     assert manifest["guide_url"] == "/plugins/rss_atom/help"
-    assert manifest["public_paths"] == ["/plugins/rss_atom/help", "/plugins/rss_atom/reader/"]
+    assert manifest["public_paths"] == [
+        "/plugins/rss_atom/help",
+        "/plugins/rss_atom/sources",
+        "/plugins/rss_atom/reader/",
+    ]
     rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
     app = FastAPI()
     for router in rss_routers:
@@ -182,7 +190,7 @@ def test_bundled_readme_help_is_safe_offline_and_linked_from_news(tmp_path, monk
     assert 'href="/plugins/rss_atom/help"' in news_page.text
 
 
-def test_bundled_readme_help_contains_copyable_optional_feed_guidance(tmp_path, monkeypatch):
+def test_bundled_readme_help_contains_beta_install_selector_and_no_refresh_contract(tmp_path, monkeypatch):
     result = _load_plugin(
         tmp_path,
         monkeypatch,
@@ -196,11 +204,14 @@ def test_bundled_readme_help_contains_copyable_optional_feed_guidance(tmp_path, 
     response = TestClient(app).get("/plugins/rss_atom/help")
 
     assert response.status_code == 200
-    assert "Quick start" in response.text
-    assert "Optional feed ideas" in response.text
-    assert "Google Developers" in response.text
-    assert "CDC Emerging Infectious Diseases" in response.text
-    assert "does not add or refresh" in response.text
+    assert "Current release" in response.text
+    assert "v0.9.0 beta" in response.text
+    assert "Minimum protoAgent" in response.text
+    assert "0.135.0" in response.text
+    assert "Choose sources" in response.text
+    assert "Manage sources" in response.text
+    assert "does not download a feed" in response.text
+    assert "Post-beta roadmap" in response.text
     assert "Troubleshooting" in response.text
 
 
@@ -719,6 +730,180 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert empty_refresh.json()["detail"] == "choose a configured category to refresh"
 
 
+def test_catalogue_selector_proposes_legacy_migration_and_saves_only_plugin_owned_settings(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        [
+            "Developer | protoAgent releases | https://github.com/protoLabsAI/protoAgent/releases.atom",
+            "Personal | Fixture custom | https://custom.example/rss | 512 | 7",
+        ],
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    loaded_module._catalog = FeedCatalog(
+        version="2026.08.0",
+        feeds=[
+            {
+                "id": "protoagent-releases",
+                "category": "Developer",
+                "name": "protoAgent releases",
+                "url": "https://github.com/protoLabsAI/protoAgent/releases.atom",
+                "previous_urls": [],
+            },
+            {
+                "id": "science-fixture",
+                "category": "Science",
+                "name": "Science fixture",
+                "url": "https://science.example/rss",
+                "previous_urls": [],
+            },
+        ],
+    )
+    transport_calls = []
+
+    class NoNetworkTransport:
+        def request(self, *args, **kwargs):
+            transport_calls.append((args, kwargs))
+            raise AssertionError("catalogue configuration must not fetch a feed")
+
+    loaded_module._transport = NoNetworkTransport()
+    patches = []
+    from graph.plugins.host import HOST
+
+    monkeypatch.setattr(HOST, "apply_settings", lambda patch: patches.append(patch) or (True, ["saved"]))
+    app = FastAPI()
+    for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
+        app.include_router(router["router"], prefix=router["prefix"])
+    client = TestClient(app)
+
+    shell = client.get("/plugins/rss_atom/sources")
+    proposal = client.get("/api/plugins/rss_atom/catalog")
+    saved = client.post(
+        "/api/plugins/rss_atom/catalog",
+        json={
+            "selected_feed_ids": ["science-fixture"],
+            "catalogue_overrides": {},
+            "custom_feeds": [
+                {
+                    "category": "Personal",
+                    "name": "Fixture custom",
+                    "url": "https://custom.example/rss",
+                    "max_feed_size_kib": 512,
+                    "max_items_per_refresh": 7,
+                }
+            ],
+        },
+    )
+
+    assert shell.status_code == 200
+    assert 'id="catalog-search"' in shell.text
+    assert 'id="catalogue"' in shell.text
+    assert 'id="custom-feeds"' in shell.text
+    assert 'id="save-sources"' in shell.text
+    assert "Upstream protoAgent releases" not in shell.text
+    assert "Fixture custom" not in shell.text
+    assert 'apiFetch("/api/plugins/rss_atom/catalog")' in shell.text
+    assert "if(!token || state.loaded || state.loading) return" in shell.text
+    assert 'event.data?.type === "protoagent:init"' in shell.text
+    assert "refresh-category" not in shell.text
+    assert proposal.status_code == 200
+    assert proposal.json()["catalog_version"] == "2026.08.0"
+    assert proposal.json()["catalogue_configured"] is False
+    assert proposal.json()["selected_feed_ids"] == ["protoagent-releases"]
+    assert proposal.json()["catalogue_overrides"] == {}
+    assert proposal.json()["custom_feeds"] == [
+        {
+            "category": "Personal",
+            "name": "Fixture custom",
+            "url": "https://custom.example/rss",
+            "max_feed_size_kib": 512,
+            "max_items_per_refresh": 7,
+        }
+    ]
+    assert saved.status_code == 200
+    assert saved.json() == {"ok": True, "messages": ["saved"]}
+    assert patches == [
+        {
+            "rss_atom": {
+                "catalogue_configured": True,
+                "selected_feed_ids": ["science-fixture"],
+                "catalogue_overrides": {},
+                "custom_feeds": [
+                    {
+                        "category": "Personal",
+                        "name": "Fixture custom",
+                        "url": "https://custom.example/rss",
+                        "max_feed_size_kib": 512,
+                        "max_items_per_refresh": 7,
+                    }
+                ],
+            }
+        }
+    ]
+    assert transport_calls == []
+    assert not (tmp_path / "state" / "rss_atom" / "feeds.db").exists()
+
+
+def test_catalogue_save_fails_closed_before_protoagent_populates_settings_host(tmp_path, monkeypatch):
+    result = _load_plugin(tmp_path, monkeypatch, [])
+    from graph.plugins.host import HOST
+
+    monkeypatch.setattr(HOST, "apply_settings", None)
+    app = FastAPI()
+    for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
+        app.include_router(router["router"], prefix=router["prefix"])
+
+    response = TestClient(app).post(
+        "/api/plugins/rss_atom/catalog",
+        json={"selected_feed_ids": [], "catalogue_overrides": {}, "custom_feeds": []},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "protoAgent settings host is unavailable"}
+    assert not (tmp_path / "state" / "rss_atom" / "feeds.db").exists()
+
+
+def test_catalogue_selector_rejects_unknown_ids_and_duplicate_custom_rows_without_saving(tmp_path, monkeypatch):
+    result = _load_plugin(tmp_path, monkeypatch, [])
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    loaded_module._catalog = FeedCatalog(
+        version="2026.08.0",
+        feeds=[
+            {
+                "id": "known",
+                "category": "Developer",
+                "name": "Known",
+                "url": "https://known.example/rss",
+                "previous_urls": [],
+            }
+        ],
+    )
+    patches = []
+    loaded_module._apply_settings = lambda patch: patches.append(patch) or (True, [])
+    app = FastAPI()
+    for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
+        app.include_router(router["router"], prefix=router["prefix"])
+    client = TestClient(app)
+
+    unknown = client.post(
+        "/api/plugins/rss_atom/catalog",
+        json={"selected_feed_ids": ["missing"], "custom_feeds": []},
+    )
+    duplicate = client.post(
+        "/api/plugins/rss_atom/catalog",
+        json={
+            "selected_feed_ids": ["known"],
+            "custom_feeds": [{"category": "Custom", "name": "Duplicate URL", "url": "https://known.example/rss"}],
+        },
+    )
+
+    assert unknown.status_code == 400
+    assert "unknown catalogue feed" in unknown.json()["detail"]
+    assert duplicate.status_code == 400
+    assert "unique" in duplicate.json()["detail"]
+    assert patches == []
+
+
 def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monkeypatch):
     result = _load_plugin(tmp_path, monkeypatch, ["Missing separator https://feeds.example/rss"])
     listed = next(tool for tool in result.tools if tool.name == "rss_list_feeds")
@@ -727,6 +912,19 @@ def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monk
 
     assert payload["status"] == "invalid_configuration"
     assert "Name | URL" in payload["error"]
+
+
+def test_manifest_and_release_compatibility_metadata_are_coherent():
+    manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
+    compatibility = json.loads((PLUGIN_ROOT / "compatibility.json").read_text())
+    pyproject = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text())
+
+    assert compatibility == {
+        "plugin_version": manifest["version"],
+        "minimum_protoagent_version": manifest["min_protoagent_version"],
+        "compatibility_basis": "Current accepted RomeoRaven protoAgent runtime pinned for the v0.9.0 beta release",
+    }
+    assert pyproject["project"]["version"] == manifest["version"]
 
 
 def test_repository_declares_mit_license():

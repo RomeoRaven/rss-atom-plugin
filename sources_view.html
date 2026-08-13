@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>RSS sources</title>
+  <script>
+    window.__base = location.pathname.split("/plugins/")[0];
+    const kitCss = document.createElement("link");
+    kitCss.rel = "stylesheet";
+    kitCss.href = window.__base + "/_ds/plugin-kit.css";
+    document.head.appendChild(kitCss);
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--pl-color-bg); color: var(--pl-color-fg); font: 14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+    .shell { width: min(1120px,100%); margin: 0 auto; padding: clamp(20px,4vw,44px); }
+    .topline { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; padding-bottom:18px; border-bottom:1px solid var(--pl-color-border); }
+    .eyebrow { margin:0 0 5px; color:var(--pl-color-fg-muted); font-size:11px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:0; font-size:clamp(25px,4vw,38px); line-height:1.1; letter-spacing:-.035em; }
+    .lede { max-width:70ch; color:var(--pl-color-fg-muted); }
+    .controls { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; margin:22px 0; }
+    input, textarea, button { font:inherit; }
+    input, textarea { width:100%; border:1px solid var(--pl-color-border); border-radius:7px; background:var(--pl-color-bg-raised); color:inherit; padding:10px 12px; }
+    button, .back { border:1px solid var(--pl-color-border); border-radius:7px; background:var(--pl-color-bg-raised); color:inherit; padding:9px 12px; text-decoration:none; cursor:pointer; }
+    button:hover, button:focus-visible, .back:hover, .back:focus-visible { border-color:var(--pl-color-accent); outline:none; }
+    .summary { margin:0 0 14px; color:var(--pl-color-fg-muted); }
+    .catalogue { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .category { border:1px solid var(--pl-color-border); border-radius:9px; overflow:hidden; background:var(--pl-color-bg-raised); }
+    .category h2 { margin:0; padding:11px 13px; border-bottom:1px solid var(--pl-color-border); font-size:13px; }
+    .feed-row { display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:start; padding:11px 13px; border-top:1px solid var(--pl-color-border); cursor:pointer; }
+    .feed-row:first-of-type { border-top:0; }
+    .feed-row input { width:17px; height:17px; margin-top:2px; accent-color:var(--pl-color-accent); }
+    .feed-name { display:block; font-weight:650; }
+    .feed-host { display:block; overflow:hidden; color:var(--pl-color-fg-muted); font:11px/1.4 ui-monospace,SFMono-Regular,monospace; text-overflow:ellipsis; white-space:nowrap; }
+    .custom { margin-top:22px; padding:16px; border:1px solid var(--pl-color-border); border-radius:9px; background:var(--pl-color-bg-raised); }
+    .custom h2 { margin:0 0 5px; font-size:17px; }
+    .custom p { margin:0 0 10px; color:var(--pl-color-fg-muted); }
+    textarea { min-height:130px; font:12px/1.5 ui-monospace,SFMono-Regular,monospace; resize:vertical; }
+    .savebar { position:sticky; bottom:0; display:flex; justify-content:space-between; gap:16px; align-items:center; margin-top:22px; padding:13px 0; background:linear-gradient(transparent,var(--pl-color-bg) 22%); }
+    .status { min-height:20px; color:var(--pl-color-fg-muted); }
+    #save-sources { border-color:var(--pl-color-accent); background:var(--pl-color-bg-raised); }
+    [hidden] { display:none !important; }
+    @media(max-width:720px){ .catalogue{grid-template-columns:1fr}.controls{grid-template-columns:1fr}.topline{flex-direction:column}.savebar{align-items:stretch;flex-direction:column}.savebar button{width:100%} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topline">
+      <div><p class="eyebrow">RSS / Atom</p><h1>Choose your sources</h1><p class="lede">Select maintained feeds or add your own. Saving changes configuration only; it never downloads articles.</p></div>
+      <a class="back" href="/plugins/rss_atom/view">Back to News</a>
+    </header>
+    <div class="controls"><input id="catalog-search" type="search" placeholder="Search feeds or categories" aria-label="Search maintained feeds"><button id="clear-all" type="button">Clear all</button></div>
+    <p class="summary" id="selection-summary">Loading maintained sources…</p>
+    <section class="catalogue" id="catalogue" aria-label="Maintained feed catalogue"></section>
+    <section class="custom"><h2>Custom feeds</h2><p>One row per feed: Category | Name | URL | optional max size KiB | optional items per refresh.</p><textarea id="custom-feeds" aria-label="Custom feed rows" spellcheck="false"></textarea></section>
+    <div class="savebar"><p class="status" id="status" role="status"></p><button id="save-sources" type="button" disabled>Save sources</button></div>
+  </main>
+  <script type="module">
+    const kit = await import(window.__base + "/_ds/plugin-kit.js");
+    const state = {data:null, selected:new Set(), overrides:{}, loaded:false, loading:false};
+    const catalogue = document.getElementById("catalogue");
+    const summary = document.getElementById("selection-summary");
+    const custom = document.getElementById("custom-feeds");
+    const status = document.getElementById("status");
+    const save = document.getElementById("save-sources");
+    const search = document.getElementById("catalog-search");
+    const rowText = feed => [feed.category,feed.name,feed.url,feed.max_feed_size_kib ?? "",feed.max_items_per_refresh ?? ""].join(" | ").replace(/ \|  \| $/,"");
+    function updateSummary(){ summary.textContent=`${state.selected.size} maintained ${state.selected.size===1?"source":"sources"} selected`; save.disabled=false; }
+    function render(){
+      const q=search.value.trim().toLowerCase();
+      const groups={};
+      state.data.feeds.forEach(feed=>{ if(q && !`${feed.category} ${feed.name} ${feed.url}`.toLowerCase().includes(q)) return; (groups[feed.category] ||= []).push(feed); });
+      catalogue.replaceChildren();
+      for (const [category, feeds] of Object.entries(groups)) {
+        const section=document.createElement("section"); section.className="category";
+        const heading=document.createElement("h2"); heading.textContent=`${category} · ${feeds.length}`; section.appendChild(heading);
+        for (const feed of feeds) {
+          const label=document.createElement("label"); label.className="feed-row";
+          const input=document.createElement("input"); input.type="checkbox"; input.dataset.feedId=feed.id; input.checked=state.selected.has(feed.id);
+          const text=document.createElement("span"); const name=document.createElement("span"); name.className="feed-name"; name.textContent=feed.name;
+          const host=document.createElement("span"); host.className="feed-host"; host.textContent=new URL(feed.url).host;
+          text.append(name,host); label.append(input,text); section.appendChild(label);
+        }
+        catalogue.appendChild(section);
+      }
+      if (!catalogue.childElementCount) { const empty=document.createElement("p"); empty.className="summary"; empty.textContent="No maintained feeds match this search."; catalogue.appendChild(empty); }
+      catalogue.querySelectorAll("[data-feed-id]").forEach(input=>input.addEventListener("change",()=>{ if(input.checked) state.selected.add(input.dataset.feedId); else state.selected.delete(input.dataset.feedId); updateSummary(); }));
+      updateSummary();
+    }
+    async function load({token}={}){ if(!token || state.loaded || state.loading) return; state.loading=true; try { const response=await kit.apiFetch("/api/plugins/rss_atom/catalog"); const data=await response.json(); if(!response.ok) throw new Error(data.detail||"Could not load sources"); state.data=data; state.selected=new Set(data.selected_feed_ids); state.overrides=data.catalogue_overrides||{}; custom.value=data.custom_feeds.map(rowText).join("\n"); state.loaded=true; render(); status.textContent=data.catalogue_configured?`Catalogue ${data.catalog_version}`:"Review the imported selections, then save to use the maintained catalogue."; } catch(error) { status.textContent=error.message; } finally { state.loading=false; } }
+    kit.initPluginView(load);
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent || event.origin !== location.origin) return;
+      if (event.data?.type === "protoagent:init" && !event.data.token) load({token:"authless-loopback"});
+    });
+    search.addEventListener("input",()=>{if(state.data)render();});
+    document.getElementById("clear-all").addEventListener("click",()=>{state.selected.clear();render();});
+    save.addEventListener("click",async()=>{ status.textContent="Saving sources…"; save.disabled=true; try { const custom_feeds=custom.value.split(/\r?\n/).map(row=>row.trim()).filter(Boolean); const catalogue_overrides=Object.fromEntries(Object.entries(state.overrides).filter(([id])=>state.selected.has(id))); const response=await kit.apiFetch("/api/plugins/rss_atom/catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({selected_feed_ids:[...state.selected].sort(),catalogue_overrides,custom_feeds})}); const data=await response.json(); if(!response.ok||!data.ok) throw new Error(data.detail||(data.messages||[]).join("; ")||"Could not save sources"); status.textContent="Sources saved. No feeds were refreshed."; } catch(error){status.textContent=error.message;} finally{save.disabled=false;} });
+  </script>
+</body>
+</html>

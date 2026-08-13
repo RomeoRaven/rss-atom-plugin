@@ -470,6 +470,41 @@ class FeedIntake:
                     )
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS reader_bodies_reader_id ON reader_bodies(reader_id)")
 
+    def migrate_feed_url(self, old_url: str, new_url: str) -> dict[str, int | str]:
+        """Move durable state to a maintained replacement URL without network access."""
+        if old_url == new_url:
+            return {"status": "unchanged", "entries": 0, "reader_bodies": 0}
+        with self._lock, self._connect() as db:
+            source_exists = db.execute("SELECT 1 FROM feeds WHERE url = ?", (old_url,)).fetchone()
+            source_entries = int(
+                db.execute("SELECT count(*) FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0]
+            )
+            source_bodies = int(
+                db.execute("SELECT count(*) FROM reader_bodies WHERE feed_url = ?", (old_url,)).fetchone()[0]
+            )
+            if not source_exists and not source_entries and not source_bodies:
+                return {"status": "not_found", "entries": 0, "reader_bodies": 0}
+            destination_exists = db.execute("SELECT 1 FROM feeds WHERE url = ?", (new_url,)).fetchone()
+            destination_entries = db.execute("SELECT 1 FROM entries WHERE feed_url = ? LIMIT 1", (new_url,)).fetchone()
+            destination_bodies = db.execute(
+                "SELECT 1 FROM reader_bodies WHERE feed_url = ? LIMIT 1", (new_url,)
+            ).fetchone()
+            if destination_exists or destination_entries or destination_bodies:
+                raise FeedIntakeError("feed URL migration destination already contains state")
+            db.execute("UPDATE entries SET feed_url = ? WHERE feed_url = ?", (new_url, old_url))
+            bodies = db.execute(
+                "SELECT rowid, entry_id FROM reader_bodies WHERE feed_url = ?",
+                (old_url,),
+            ).fetchall()
+            for body in bodies:
+                db.execute(
+                    "UPDATE reader_bodies SET feed_url = ?, reader_id = ? WHERE rowid = ?",
+                    (new_url, _reader_id(new_url, body["entry_id"]), body["rowid"]),
+                )
+            if source_exists:
+                db.execute("UPDATE feeds SET url = ? WHERE url = ?", (new_url, old_url))
+            return {"status": "migrated", "entries": source_entries, "reader_bodies": source_bodies}
+
     def _normalize(self, feed_url: str, body: bytes) -> list[dict[str, str]]:
         parsed = feedparser.parse(body)
         if getattr(parsed, "bozo", 0):
