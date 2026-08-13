@@ -355,6 +355,8 @@ def _data_router():
     async def _refresh_category(payload: dict[str, Any]):
         category = str(payload.get("category") or "").strip()
         try:
+            if not category:
+                raise ValueError("choose a configured category to refresh")
             feeds = _category_feeds(category)
             if "feed_urls" in payload:
                 requested = payload["feed_urls"]

@@ -15,7 +15,7 @@ config:
   feeds: []
   max_items_per_refresh: 100
   default_recent_items: 20
-  max_feed_size_kib: 256
+  max_bytes: 262144
   timeout_seconds: 15
   max_entries_per_feed: 1000
 settings:

@@ -96,6 +96,8 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
     assert manifest["enabled"] is False
     assert manifest["repository"] == "https://github.com/RomeoRaven/rss-atom-plugin"
     assert manifest["homepage"] == "https://agent.protolabs.studio"
+    assert manifest["config"]["max_bytes"] == 262144
+    assert "max_feed_size_kib" not in manifest["config"]
     assert manifest["requires_pip"] == [
         {"pkg": "feedparser>=6.0.14,<7", "scope": "host"},
         {"pkg": "httpx>=0.27,<1", "scope": "host"},
@@ -347,11 +349,14 @@ def test_refresh_uses_per_feed_size_and_item_limits(tmp_path, monkeypatch):
 
 
 def test_legacy_max_bytes_remains_effective_unless_new_kib_setting_is_explicit(tmp_path, monkeypatch):
+    manifest_defaults = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())["config"]
+    manifest_defaults.pop("feeds", None)
+    legacy_resolved = {**manifest_defaults, "max_bytes": 333333}
     result = _load_plugin(
         tmp_path,
         monkeypatch,
         ["Legacy | https://feeds.example/rss"],
-        max_bytes=333333,
+        **legacy_resolved,
     )
     loaded_module = sys.modules["protoagent_plugin_rss_atom"]
     calls = []
@@ -371,12 +376,12 @@ def test_legacy_max_bytes_remains_effective_unless_new_kib_setting_is_explicit(t
 
     explicit_root = tmp_path / "explicit"
     explicit_root.mkdir()
+    explicit_resolved = {**manifest_defaults, "max_bytes": 333333, "max_feed_size_kib": 512}
     explicit = _load_plugin(
         explicit_root,
         monkeypatch,
         ["Modern | https://feeds.example/modern"],
-        max_bytes=333333,
-        max_feed_size_kib=512,
+        **explicit_resolved,
     )
     explicit_module = sys.modules["protoagent_plugin_rss_atom"]
     explicit_calls = []
@@ -697,6 +702,10 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
 
     assert client.get("/api/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
     assert client.get("/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
+
+    empty_refresh = client.post("/api/plugins/rss_atom/refresh-category", json={})
+    assert empty_refresh.status_code == 400
+    assert empty_refresh.json()["detail"] == "choose a configured category to refresh"
 
 
 def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monkeypatch):
