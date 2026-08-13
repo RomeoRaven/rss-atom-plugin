@@ -134,7 +134,7 @@ def test_bundled_readme_is_exposed_as_the_manifest_help_page(tmp_path, monkeypat
     manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
 
     assert manifest["guide_url"] == "/plugins/rss_atom/help"
-    assert manifest["public_paths"] == ["/plugins/rss_atom/help"]
+    assert manifest["public_paths"] == ["/plugins/rss_atom/help", "/plugins/rss_atom/reader/"]
     rss_routers = [router for router in result.routers if router["plugin_id"] == "rss_atom"]
     app = FastAPI()
     for router in rss_routers:
@@ -660,9 +660,15 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     app = FastAPI()
     for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
         app.include_router(router["router"], prefix=router["prefix"])
+    from a2a_impl import auth
+
+    manifest = yaml.safe_load((PLUGIN_ROOT / "protoagent.plugin.yaml").read_text())
+    auth.set_public_prefixes(manifest["public_paths"])
+    auth.install(app, bearer_token="reader-secret", api_key="", allowed_origins_raw="")
     client = TestClient(app)
 
-    news = client.get("/api/plugins/rss_atom/news", params={"category": "Developer"})
+    operator_headers = {"Authorization": "Bearer reader-secret"}
+    news = client.get("/api/plugins/rss_atom/news", params={"category": "Developer"}, headers=operator_headers)
     assert news.status_code == 200
     listed = news.json()["entries"][0]
     assert listed["entry_id"] == "reader-1"
@@ -671,7 +677,8 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert "reader_html" not in listed
     assert "summary" not in listed
 
-    detail = client.get(f"/api/plugins/rss_atom/reader/{listed['reader_id']}")
+    assert client.get(f"/api/plugins/rss_atom/reader/{listed['reader_id']}").status_code == 401
+    detail = client.get(f"/api/plugins/rss_atom/reader/{listed['reader_id']}", headers=operator_headers)
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["source"] == "Structured"
@@ -687,8 +694,10 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert 'id="reader-content"' in reader_page.text
     assert "/api/plugins/rss_atom/reader/" in reader_page.text
     assert "Back to News" in reader_page.text
+    assert "kit.initPluginView(loadReader)" in reader_page.text
+    assert "loadReader().catch" not in reader_page.text
 
-    news_page = client.get("/plugins/rss_atom/view")
+    news_page = client.get("/plugins/rss_atom/view", headers=operator_headers)
     assert news_page.status_code == 200
     assert "entry.excerpt" in news_page.text
     assert "entry.summary" not in news_page.text
@@ -700,10 +709,10 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert "/plugins/rss_atom/reader/" in news_page.text
     assert "window.setTimeout" not in news_page.text
 
-    assert client.get("/api/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
-    assert client.get("/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
+    assert client.get("/api/plugins/rss_atom/reader/not-a-reader-id", headers=operator_headers).status_code == 404
+    assert client.get("/plugins/rss_atom/reader/not-a-reader-id").status_code == 200
 
-    empty_refresh = client.post("/api/plugins/rss_atom/refresh-category", json={})
+    empty_refresh = client.post("/api/plugins/rss_atom/refresh-category", json={}, headers=operator_headers)
     assert empty_refresh.status_code == 400
     assert empty_refresh.json()["detail"] == "choose a configured category to refresh"
 
