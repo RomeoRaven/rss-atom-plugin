@@ -695,6 +695,8 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert "/api/plugins/rss_atom/reader/" in reader_page.text
     assert "Back to News" in reader_page.text
     assert "kit.initPluginView(loadReader)" in reader_page.text
+    assert "async function loadReader({ token } = {})" in reader_page.text
+    assert "if (!token || readerLoading || content.dataset.loaded) return;" in reader_page.text
     assert "loadReader().catch" not in reader_page.text
 
     news_page = client.get("/plugins/rss_atom/view", headers=operator_headers)

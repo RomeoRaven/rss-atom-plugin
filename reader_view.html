@@ -60,8 +60,8 @@
     const content = document.getElementById("reader-content");
     let readerLoading = false;
     const fmt = (value) => { if (!value) return "Unknown time"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString([], {dateStyle:"medium",timeStyle:"short"}); };
-    async function loadReader() {
-      if (readerLoading || content.dataset.loaded) return;
+    async function loadReader({ token } = {}) {
+      if (!token || readerLoading || content.dataset.loaded) return;
       readerLoading = true;
       try {
         const response = await kit.apiFetch(`/api/plugins/rss_atom/reader/${encodeURIComponent(readerId)}`);
