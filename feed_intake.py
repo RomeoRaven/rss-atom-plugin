@@ -19,9 +19,48 @@ from typing import Callable, Protocol
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import feedparser
+import nh3
 
 _DB_LOCKS: dict[str, threading.RLock] = {}
 _DB_LOCKS_GUARD = threading.Lock()
+
+_READER_TAGS = {
+    "a",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "strong",
+    "ul",
+}
+_READER_CLEANER = nh3.Cleaner(
+    tags=_READER_TAGS,
+    clean_content_tags={"audio", "embed", "form", "iframe", "img", "object", "script", "style", "svg", "video"},
+    attributes={"a": {"href"}},
+    link_rel="noopener noreferrer",
+    set_tag_attribute_values={"a": {"target": "_blank"}},
+    url_schemes={"http", "https"},
+    url_relative="deny",
+)
+_READER_MAX_BYTES = 128 * 1024
+_READER_MAX_NODES = 5000
+_READER_MAX_LINKS = 1000
+_READER_MAX_PER_FEED = 20
+_EXCERPT_MAX_CHARS = 400
+_PLAIN_TEXT_MAX_BYTES = 64 * 1024
 
 
 def _db_lock(path: Path) -> threading.RLock:
@@ -265,6 +304,57 @@ def _plain_text(value: str) -> str:
     return " ".join(html.unescape(" ".join(parser.parts)).split())
 
 
+class _ReaderShape(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.nodes = 0
+        self.links = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        self.nodes += 1
+        if tag.lower() == "a":
+            self.links += 1
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        self.handle_starttag(tag, attrs)
+
+
+def _excerpt(value: str, maximum: int = _EXCERPT_MAX_CHARS) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= maximum:
+        return text
+    clipped = text[: maximum - 1].rsplit(" ", 1)[0].rstrip(" ,.;:-")
+    return f"{clipped or text[: maximum - 1]}…"
+
+
+def _reader_id(feed_url: str, entry_id: str) -> str:
+    return hashlib.sha256(f"{feed_url}\x1f{entry_id}".encode()).hexdigest()
+
+
+def _bounded_plain_text(value: str) -> str:
+    text = _plain_text(value)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= _PLAIN_TEXT_MAX_BYTES:
+        return text
+    suffix = "…".encode()
+    clipped = encoded[: _PLAIN_TEXT_MAX_BYTES - len(suffix)]
+    return clipped.decode("utf-8", errors="ignore").rstrip() + "…"
+
+
+def _reader_html(value: str) -> str:
+    sanitized = _READER_CLEANER.clean(value or "").strip()
+    if len(_plain_text(sanitized)) <= _EXCERPT_MAX_CHARS:
+        return ""
+    if len(sanitized.encode("utf-8")) > _READER_MAX_BYTES:
+        return ""
+    shape = _ReaderShape()
+    shape.feed(sanitized)
+    shape.close()
+    if shape.nodes > _READER_MAX_NODES or shape.links > _READER_MAX_LINKS:
+        return ""
+    return sanitized
+
+
 def _canonical_url(value: str) -> str:
     if not value:
         return ""
@@ -335,6 +425,14 @@ class FeedIntake:
                     summary TEXT NOT NULL,
                     PRIMARY KEY (feed_url, entry_id)
                 );
+                CREATE TABLE IF NOT EXISTS reader_bodies (
+                    feed_url TEXT NOT NULL,
+                    entry_id TEXT NOT NULL,
+                    reader_id TEXT NOT NULL,
+                    content_version INTEGER NOT NULL,
+                    reader_html TEXT NOT NULL,
+                    PRIMARY KEY (feed_url, entry_id)
+                );
                 """
             )
             existing = {row["name"] for row in db.execute("PRAGMA table_info(feeds)").fetchall()}
@@ -347,6 +445,16 @@ class FeedIntake:
             for name, declaration in additions.items():
                 if name not in existing:
                     db.execute(f"ALTER TABLE feeds ADD COLUMN {name} {declaration}")
+            reader_columns = {row["name"] for row in db.execute("PRAGMA table_info(reader_bodies)").fetchall()}
+            if "reader_id" not in reader_columns:
+                db.execute("ALTER TABLE reader_bodies ADD COLUMN reader_id TEXT NOT NULL DEFAULT ''")
+                rows = db.execute("SELECT rowid, feed_url, entry_id FROM reader_bodies").fetchall()
+                for row in rows:
+                    db.execute(
+                        "UPDATE reader_bodies SET reader_id = ? WHERE rowid = ?",
+                        (_reader_id(row["feed_url"], row["entry_id"]), row["rowid"]),
+                    )
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS reader_bodies_reader_id ON reader_bodies(reader_id)")
 
     def _normalize(self, feed_url: str, body: bytes) -> list[dict[str, str]]:
         parsed = feedparser.parse(body)
@@ -363,6 +471,11 @@ class FeedIntake:
             summary_source = item.get("summary") or item.get("description") or ""
             if not summary_source and item.get("content"):
                 summary_source = item.content[0].get("value", "")
+            structured_source = ""
+            if item.get("content"):
+                structured_source = str(item.content[0].get("value", ""))
+            if not structured_source:
+                structured_source = str(summary_source)
             raw_id = str(item.get("id") or item.get("guid") or "").strip()
             entry_id = raw_id or hashlib.sha256("\x1f".join((feed_url, link, title, published)).encode()).hexdigest()
             entries.append(
@@ -372,7 +485,8 @@ class FeedIntake:
                     "title": title,
                     "link": link,
                     "published": published,
-                    "summary": _plain_text(str(summary_source)),
+                    "summary": _bounded_plain_text(str(summary_source)),
+                    "reader_html": _reader_html(structured_source),
                 }
             )
         return entries
@@ -477,6 +591,7 @@ class FeedIntake:
         if not 200 <= response.status < 300:
             raise FeedIntakeError(f"feed request failed with HTTP {response.status}")
         normalized = self._normalize(feed_url, response.body)[: self.max_items_per_refresh]
+        normalized_ids = {entry["entry_id"] for entry in normalized}
         processed = len(normalized)
         inserted = 0
         duplicates = 0
@@ -489,6 +604,16 @@ class FeedIntake:
                     (feed_url,),
                 ).fetchall()
             ]
+            existing_bodies = {
+                (row["feed_url"], row["entry_id"]): {
+                    "content_version": row["content_version"],
+                    "reader_html": row["reader_html"],
+                }
+                for row in db.execute(
+                    "SELECT feed_url, entry_id, content_version, reader_html FROM reader_bodies WHERE feed_url = ?",
+                    (feed_url,),
+                ).fetchall()
+            }
             existing_ids = {entry["entry_id"] for entry in existing}
             retained: list[dict[str, str]] = []
             retained_ids: set[str] = set()
@@ -503,12 +628,33 @@ class FeedIntake:
             inserted = sum(1 for entry in retained if entry["entry_id"] not in existing_ids)
             duplicates = sum(1 for entry in retained if entry["entry_id"] in existing_ids)
             db.execute("DELETE FROM entries WHERE feed_url = ?", (feed_url,))
+            db.execute("DELETE FROM reader_bodies WHERE feed_url = ?", (feed_url,))
             for entry in reversed(retained):
+                stored_entry = {
+                    key: entry[key] for key in ("feed_url", "entry_id", "title", "link", "published", "summary")
+                }
                 db.execute(
                     "INSERT INTO entries(feed_url, entry_id, title, link, published, summary) "
                     "VALUES(:feed_url, :entry_id, :title, :link, :published, :summary)",
-                    entry,
+                    stored_entry,
                 )
+            bodies_written = 0
+            for entry in retained:
+                body = str(entry.get("reader_html") or "")
+                version = 1
+                if not body and entry["entry_id"] not in normalized_ids:
+                    previous = existing_bodies.get((feed_url, entry["entry_id"]))
+                    if previous:
+                        body = str(previous["reader_html"])
+                        version = int(previous["content_version"])
+                if not body or bodies_written >= _READER_MAX_PER_FEED:
+                    continue
+                db.execute(
+                    "INSERT INTO reader_bodies(feed_url, entry_id, reader_id, content_version, reader_html) "
+                    "VALUES(?, ?, ?, ?, ?)",
+                    (feed_url, entry["entry_id"], _reader_id(feed_url, entry["entry_id"]), version, body),
+                )
+                bodies_written += 1
             db.execute(
                 "INSERT INTO feeds(url, etag, last_modified, last_status, last_checked, "
                 "last_processed, last_inserted, last_duplicates) VALUES(?, ?, ?, 'updated', ?, ?, ?, ?) "
@@ -598,6 +744,55 @@ class FeedIntake:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def recent_entries_with_reader(
+        self, limit: int = 20, feed_url: str = "", feed_urls: list[str] | None = None
+    ) -> list[dict[str, str | bool]]:
+        if feed_url and feed_urls is not None:
+            raise ValueError("feed_url and feed_urls are mutually exclusive")
+        if feed_url:
+            where = "WHERE entries.feed_url = ?"
+            params: tuple[str | int, ...] = (feed_url, limit)
+        elif feed_urls is not None:
+            if not feed_urls:
+                return []
+            placeholders = ",".join("?" for _ in feed_urls)
+            where = f"WHERE entries.feed_url IN ({placeholders})"
+            params = (*feed_urls, limit)
+        else:
+            where = ""
+            params = (limit,)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT entries.entry_id, entries.feed_url, entries.title, entries.link, entries.published, "
+                "entries.summary, reader_bodies.entry_id IS NOT NULL AS has_reader "
+                "FROM entries LEFT JOIN reader_bodies USING(feed_url, entry_id) "
+                f"{where} ORDER BY entries.rowid DESC LIMIT ?",
+                params,
+            ).fetchall()
+        result: list[dict[str, str | bool]] = []
+        for row in rows:
+            item = dict(row)
+            has_reader = bool(item.pop("has_reader"))
+            summary = str(item.pop("summary"))
+            item["excerpt"] = _excerpt(summary)
+            item["has_reader"] = has_reader
+            item["reader_id"] = _reader_id(str(item["feed_url"]), str(item["entry_id"]))
+            result.append(item)
+        return result
+
+    def reader_entry(self, reader_id: str) -> dict[str, str | int] | None:
+        wanted = str(reader_id or "").strip().lower()
+        if len(wanted) != 64 or any(char not in "0123456789abcdef" for char in wanted):
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT entries.entry_id, entries.feed_url, entries.title, entries.link, entries.published, "
+                "reader_bodies.content_version, reader_bodies.reader_html "
+                "FROM entries JOIN reader_bodies USING(feed_url, entry_id) WHERE reader_bodies.reader_id = ?",
+                (wanted,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def count_entries(self, feed_urls: list[str] | None = None) -> int:
         if feed_urls is not None:

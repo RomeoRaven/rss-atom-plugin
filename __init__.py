@@ -220,9 +220,9 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
             {"name": name, "feed_count": len(feeds), "entry_count": intake.count_entries(feed_urls=urls)}
         )
     if source_feed:
-        entries = intake.recent_entries(limit=configured_default, feed_url=source_feed["url"])
+        entries = intake.recent_entries_with_reader(limit=configured_default, feed_url=source_feed["url"])
     else:
-        entries = intake.recent_entries(
+        entries = intake.recent_entries_with_reader(
             limit=configured_default,
             feed_urls=[feed["url"] for feed in selected_feeds],
         )
@@ -300,6 +300,17 @@ def _view_router():
             f'<article class="markdown">{rendered}</article></main></body></html>'
         )
 
+    @router.get("/reader/{reader_id}")
+    async def _reader(reader_id: str):
+        detail = await asyncio.to_thread(_intake().reader_entry, reader_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Reader content is unavailable")
+        try:
+            source = Path(__file__).with_name("reader_view.html").read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise HTTPException(status_code=404, detail="Reader view is not bundled") from exc
+        return HTMLResponse(source)
+
     return router
 
 
@@ -314,6 +325,21 @@ def _data_router():
             return await asyncio.to_thread(_news_payload, category, source)
         except (TypeError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
+
+    @router.get("/reader/{reader_id}")
+    async def _reader(reader_id: str):
+        detail = await asyncio.to_thread(_intake().reader_entry, reader_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Reader content is unavailable")
+        feed = next((item for item in _feeds() if item["url"] == detail["feed_url"]), None)
+        if feed is None:
+            raise HTTPException(status_code=404, detail="Reader source is no longer configured")
+        return {
+            **detail,
+            "link": _safe_article_link(detail.get("link")),
+            "source": feed["name"],
+            "category": feed["category"],
+        }
 
     @router.post("/refresh-category")
     async def _refresh_category(payload: dict[str, Any]):

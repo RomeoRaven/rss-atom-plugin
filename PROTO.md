@@ -6,8 +6,8 @@ Status: implementation candidate for RomeoRaven/protoAgent issue #23.
 
 This standalone plugin owns generic operator-selected RSS/Atom protocol intake:
 configured sources, bounded manual refresh, normalized durable entries, stable
-IDs, ETag/Last-Modified state, deduplication, per-feed storage bounds, and
-refresh status.
+IDs, ETag/Last-Modified state, deduplication, per-feed storage bounds, compact
+News excerpts, optional sanitized reader bodies, and refresh status.
 
 protoAgent core owns plugin loading/configuration and `security.egress` policy.
 protoPen remains parser/fixture precedent, not a runtime dependency or owner.
@@ -31,7 +31,9 @@ inherit global defaults and 100 is the absolute item ceiling. The plugin-owned N
 filters stored articles by category and source. A separate browser-persisted eye
 toggle includes or skips each configured category feed for an explicit selected-
 feed refresh; the server rejects empty, duplicate, unknown, or cross-category
-refresh selections. The agent cannot add, edit, remove, purge, or schedule feeds.
+refresh selections. News returns only bounded excerpts and reader availability;
+the structured body is available from a separate detail route. The agent cannot
+add, edit, remove, purge, or schedule feeds.
 
 ## Storage lifecycle
 
@@ -43,7 +45,12 @@ durably records checked time, processed/new/duplicate counts, status, and bounde
 error. A failed refresh does not replace good validators or partially insert entries.
 
 Disable and uninstall retain data. Re-enable reuses it. Schema creation and the
-additive feed-health migration are idempotent; no purge behavior is introduced.
+additive feed-health and reader-body migrations are idempotent; no purge behavior
+is introduced. Existing rows receive no reader body and require no migration-time
+network access. Plain-text fallback is capped at 64 KiB UTF-8; list excerpts are
+capped at 400 characters. Optional sanitized bodies live in a separate table and
+are capped at 128 KiB, 5,000 elements, 1,000 links, and the newest 20 meaningful
+bodies per feed while metadata retention remains independently configurable.
 
 ## HTTP policy
 
@@ -57,7 +64,14 @@ additive feed-health migration are idempotent; no purge behavior is introduced.
 - each refresh processes 1–100 newest entries, from the feed override or global default;
 - non-2xx except 304 fails closed; retry/background pacing is not automatic;
 - `feedparser` bozo/malformed results are rejected completely;
-- untrusted HTML becomes bounded plain text in tool results.
+- untrusted HTML becomes bounded plain text in tool results;
+- meaningful full-content entries are sanitized by `nh3`/Ammonia into a strict
+  structural allowlist: headings, paragraphs, lists, blockquotes, pre/code,
+  emphasis, safe HTTP(S) links, breaks, and rules;
+- scripts, styles, SVG, forms, media/embeds, inline styles/classes/IDs, event
+  handlers, relative links, and unsafe URL schemes are removed;
+- structured bodies are populated only by explicit refresh; list/detail page
+  loads never fetch a feed or source page.
 
 `security.egress` performs host resolution before each request. This is the host's
 current SSRF contract; the plugin does not invent a parallel allowlist. It does

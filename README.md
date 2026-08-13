@@ -16,6 +16,8 @@ query recent entries and refresh status.
 6. Use the adjacent refresh icon to fetch only that source immediately.
 7. Click **Refresh selected** only when you want to fetch every included feed in
    the category.
+8. Use **Read here** for long structured entries or **Open source** to leave the
+   plugin. Short and link-only entries remain source-first.
 
 Adding a row configures a source; it does not add or refresh articles by itself.
 Removing a row stops it appearing in News but does not purge previously stored
@@ -59,6 +61,14 @@ Selecting one source also shows durable health: last-check time, whether the
 source worked or failed, new/already-stored counts, stored article count, and the
 effective size/item limits. This distinguishes an untested source, no new items,
 an unchanged source, an empty source, and a failed refresh.
+
+News never renders a complete article body in the scrolling list. It shows a
+bounded plain-text excerpt (at most 400 characters and five visual lines), keeps
+the canonical source action visible, and offers **Read here** only when an
+explicit refresh stored meaningful structured content. The separate reader
+preserves safe headings, paragraphs, lists, blockquotes, code, emphasis, and
+HTTP(S) links. Existing plain-text rows remain readable as excerpts and source
+links without migration-time network access.
 
 ## Optional feed ideas
 
@@ -116,7 +126,15 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 - The configured timeout is one total refresh deadline across all redirect hops.
 - Decompressed response bytes, query size, and stored entries per feed are bounded.
 - Malformed feeds and request errors commit no partial entries and expose bounded error status.
-- Feed HTML is reduced to plain text; scripts and styles are suppressed.
+- Plain-text fallback is UTF-8 bounded to 64 KiB and list excerpts to 400 characters.
+- Optional reader HTML is sanitized by `nh3`/Ammonia with a strict structural
+  allowlist. Scripts, styles, SVG, forms, media/embeds, inline styles/classes/IDs,
+  event handlers, relative links, and non-HTTP(S) URL schemes are removed.
+- Reader bodies are independently capped at 128 KiB, 5,000 elements, 1,000 links,
+  and the newest 20 meaningful bodies per feed. Metadata retention remains at
+  the configured value (default 1,000 entries per feed).
+- New reader bodies are created only by explicit later refreshes. No migration,
+  configuration change, page load, or reader action fetches a feed or source page.
 - Refreshes are operator-triggered and serialized in-process.
 - Disable stops all activity because there is no background process.
 - Disable/uninstall retains the SQLite data. No purge tool exists in this slice.

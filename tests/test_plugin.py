@@ -100,6 +100,7 @@ def test_manifest_declares_scoped_state_network_and_no_background_surface():
         {"pkg": "feedparser>=6.0.14,<7", "scope": "host"},
         {"pkg": "httpx>=0.27,<1", "scope": "host"},
         {"pkg": "markdown-it-py>=3,<5", "scope": "host"},
+        {"pkg": "nh3==0.3.6", "scope": "host"},
     ]
     assert manifest["capabilities"] == {"network": ["configured RSS/Atom feed hosts"], "filesystem": "scoped"}
     settings = {item["key"]: item for item in manifest["settings"]}
@@ -392,7 +393,7 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
         def count_entries(self, *, feed_urls):
             return 1 if feed_urls == ["https://feeds.example/rss", "https://more.example/rss"] else 0
 
-        def recent_entries(self, *, limit, feed_url="", feed_urls=None):
+        def recent_entries_with_reader(self, *, limit, feed_url="", feed_urls=None):
             assert limit == 7
             if feed_url:
                 assert feed_url == "https://more.example/rss"
@@ -406,7 +407,9 @@ def test_news_view_exposes_category_selector_filtered_entries_and_category_refre
                     "title": "A useful headline",
                     "link": "javascript:alert(1)",
                     "published": "2026-08-12T12:00:00+00:00",
-                    "summary": "A concise summary.",
+                    "excerpt": "A concise summary.",
+                    "has_reader": False,
+                    "reader_id": "0" * 64,
                 }
             ]
 
@@ -510,7 +513,7 @@ def test_news_exposes_durable_per_feed_health_and_effective_limits(tmp_path, mon
         def count_entries(self, *, feed_urls):
             return 4 if feed_urls == ["https://feeds.example/failed", "https://feeds.example/healthy"] else 0
 
-        def recent_entries(self, *, limit, feed_url="", feed_urls=None):
+        def recent_entries_with_reader(self, *, limit, feed_url="", feed_urls=None):
             return []
 
         def feed_status(self, url):
@@ -570,6 +573,82 @@ def test_news_exposes_durable_per_feed_health_and_effective_limits(tmp_path, mon
     assert "Last refresh failed" in view
     assert "Source unchanged since the last check" in view
     assert "Source returned no entries" in view
+
+
+def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Developer | Structured | https://feeds.example/structured"],
+        default_recent_items=7,
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    structured = (
+        "<h2>Release notes</h2><p>"
+        + ("A bounded but meaningful reader paragraph. " * 20)
+        + "</p><ul><li>First change</li><li><code>safe_call()</code></li></ul>"
+        + '<a href="https://safe.example/docs">Documentation</a>'
+        + '<script>window.PWNED=true</script><a href="javascript:bad()">unsafe</a>'
+    )
+
+    class OfflineTransport:
+        def request(self, url, headers, *, timeout_seconds, max_bytes):
+            body = f"""<?xml version="1.0"?><rss version="2.0"><channel><title>Structured</title>
+            <item><guid>reader-1</guid><title>Readable release</title>
+            <link>https://news.example/reader-1</link><description><![CDATA[{structured}]]></description></item>
+            </channel></rss>""".encode()
+            return Response(200, {}, body)
+
+    loaded_module._transport = OfflineTransport()
+    from security.egress import set_allowed_hosts
+
+    set_allowed_hosts(["feeds.example"])
+    refresh = next(tool for tool in result.tools if tool.name == "rss_refresh_feed")
+    assert json.loads(refresh.invoke({"name": "Structured"}))["inserted"] == 1
+    app = FastAPI()
+    for router in [item for item in result.routers if item["plugin_id"] == "rss_atom"]:
+        app.include_router(router["router"], prefix=router["prefix"])
+    client = TestClient(app)
+
+    news = client.get("/api/plugins/rss_atom/news", params={"category": "Developer"})
+    assert news.status_code == 200
+    listed = news.json()["entries"][0]
+    assert listed["entry_id"] == "reader-1"
+    assert listed["has_reader"] is True
+    assert len(listed["excerpt"]) <= 400
+    assert "reader_html" not in listed
+    assert "summary" not in listed
+
+    detail = client.get(f"/api/plugins/rss_atom/reader/{listed['reader_id']}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload["source"] == "Structured"
+    assert payload["category"] == "Developer"
+    assert payload["link"] == "https://news.example/reader-1"
+    assert "<h2>Release notes</h2>" in payload["reader_html"]
+    assert "<ul>" in payload["reader_html"]
+    assert "javascript:" not in payload["reader_html"]
+    assert "<script" not in payload["reader_html"]
+
+    reader_page = client.get(f"/plugins/rss_atom/reader/{listed['reader_id']}")
+    assert reader_page.status_code == 200
+    assert 'id="reader-content"' in reader_page.text
+    assert "/api/plugins/rss_atom/reader/" in reader_page.text
+    assert "Back to News" in reader_page.text
+
+    news_page = client.get("/plugins/rss_atom/view")
+    assert news_page.status_code == 200
+    assert "entry.excerpt" in news_page.text
+    assert "entry.summary" not in news_page.text
+    assert 'class="entry-actions"' in news_page.text
+    assert "entry.has_reader" in news_page.text
+    assert "Read here" in news_page.text
+    assert "Open source" in news_page.text
+    assert "-webkit-line-clamp: 5" in news_page.text
+    assert "/plugins/rss_atom/reader/" in news_page.text
+
+    assert client.get("/api/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
+    assert client.get("/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
 
 
 def test_invalid_gui_feed_row_fails_closed_with_actionable_format(tmp_path, monkeypatch):

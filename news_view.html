@@ -51,9 +51,11 @@
     .entry { padding: 16px 18px; background: var(--pl-color-bg-panel, #11161c); }
     .entry-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 11px; }
     .entry h2 { margin: 0; font-size: 16px; line-height: 1.35; }
-    .entry h2 a { color: inherit; text-decoration: none; }
-    .entry h2 a:hover, .entry h2 a:focus-visible { color: var(--pl-color-brand, #9f8cff); outline: none; text-decoration: underline; }
-    .entry p { margin: 7px 0 0; color: var(--pl-color-fg-muted, #a8b0ba); max-width: 80ch; }
+    .entry-excerpt { display: -webkit-box; margin: 7px 0 0; max-width: 80ch; overflow: hidden; color: var(--pl-color-fg-muted, #a8b0ba); -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
+    .entry-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+    .entry-action { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 9px; border: 1px solid var(--pl-color-border, #39434f); border-radius: 6px; color: var(--pl-color-fg, #eef1f5); font-size: 12px; text-decoration: none; }
+    .entry-action:hover, .entry-action:focus-visible { border-color: var(--pl-color-brand, #8b72ff); color: var(--pl-color-brand, #b5a8ff); outline: none; }
+    .entry-action-primary { background: color-mix(in srgb, var(--pl-color-brand, #8b72ff) 13%, transparent); }
     .empty { padding: 32px 18px; background: var(--pl-color-bg-panel, #11161c); color: var(--pl-color-fg-muted, #9ca6b2); text-align: center; }
     @media (max-width: 720px) { .shell { grid-template-columns: minmax(0, 1fr); width: 100%; overflow: hidden; } .rail, .main { width: 100%; min-width: 0; } .rail { border-right: 0; border-bottom: 1px solid var(--pl-color-border, #29313a); } .categories { display: flex; max-width: 100%; overflow-x: auto; padding-bottom: 4px; } .category { width: auto; min-width: max-content; } .toolbar { align-items: stretch; flex-direction: column; } .refresh { align-self: flex-start; } .skip-toggle, .feed-refresh { width: 36px; min-height: 36px; } }
   </style>
@@ -163,7 +165,11 @@
       const feedHealth = healthText(selectedFeed);
       health.dataset.state = feedHealth.state;
       health.textContent = feedHealth.text;
-      entries.innerHTML = data.entries.length ? data.entries.map(entry => `<article class="entry"><div class="entry-meta"><span>${esc(entry.source)}</span><span>${esc(fmt(entry.published))}</span></div><h2><a href="${esc(entry.link)}" target="_blank" rel="noreferrer">${esc(entry.title || "Untitled")}</a></h2>${entry.summary ? `<p>${esc(entry.summary)}</p>` : ""}</article>`).join("") : `<div class="empty">No stored articles match this selection. Select a source to see its refresh health above.</div>`;
+      entries.innerHTML = data.entries.length ? data.entries.map(entry => {
+        const readerAction = entry.has_reader ? `<a class="entry-action entry-action-primary" href="/plugins/rss_atom/reader/${encodeURIComponent(entry.reader_id)}">Read here</a>` : "";
+        const sourceAction = entry.link ? `<a class="entry-action" href="${esc(entry.link)}" target="_blank" rel="noopener noreferrer">Open source</a>` : "";
+        return `<article class="entry"><div class="entry-meta"><span>${esc(entry.source)}</span><span>${esc(fmt(entry.published))}</span></div><h2>${esc(entry.title || "Untitled")}</h2>${entry.excerpt ? `<p class="entry-excerpt">${esc(entry.excerpt)}</p>` : ""}<div class="entry-actions">${readerAction}${sourceAction}</div></article>`;
+      }).join("") : `<div class="empty">No stored articles match this selection. Select a source to see its refresh health above.</div>`;
       status.textContent = "";
       updateRefreshState();
     }
