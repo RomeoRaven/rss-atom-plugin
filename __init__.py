@@ -138,9 +138,7 @@ def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
         if not selected_feed.get("catalogue_id"):
             continue
         for old_url in _catalog.aliases_for(str(selected_feed["catalogue_id"])):
-            result = intake.migrate_feed_url(old_url, str(selected_feed["url"]))
-            if result["status"] == "migrated":
-                break
+            intake.migrate_feed_url(old_url, str(selected_feed["url"]))
     return intake
 
 

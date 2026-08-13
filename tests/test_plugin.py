@@ -810,6 +810,9 @@ def test_catalogue_selector_proposes_legacy_migration_and_saves_only_plugin_owne
     assert "if(!token || state.loaded || state.loading) return" in shell.text
     assert 'event.data?.type === "protoagent:init"' in shell.text
     assert "refresh-category" not in shell.text
+    plugin_source = (PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
+    assert 'for old_url in _catalog.aliases_for(str(selected_feed["catalogue_id"])):' in plugin_source
+    assert 'if result["status"] == "migrated":' not in plugin_source
     assert proposal.status_code == 200
     assert proposal.json()["catalog_version"] == "2026.08.0"
     assert proposal.json()["catalogue_configured"] is False

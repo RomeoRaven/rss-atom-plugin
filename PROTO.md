@@ -63,10 +63,13 @@ feeds deprecated, or add selectable sources. Updates never auto-select a new fee
 fetch a remote catalogue, refresh a feed, or delete custom sources/articles.
 
 When a selected catalogue record changes URL, normal local data access performs an
-atomic SQLite provenance migration from an exact previous URL to the current URL.
-It moves validators, health, entries, and reader bodies while preserving stored reader IDs.
-It refuses an occupied destination and performs no network request. Opening or
-saving the selector does not instantiate storage or perform this migration.
+atomic SQLite provenance migration from every exact previous URL to the current
+URL. It unions distinct historical articles and reader bodies, preserves stored
+reader IDs, rekeys URL-derived fallback entry IDs, and keeps current validators
+and rows when the same identity already exists at the destination. Historical
+rows are removed only inside the successful transaction. Migration performs no
+network request. Opening or saving the selector does not instantiate storage or
+perform this migration.
 
 Selector saves late-bind protoAgent's `HOST.apply_settings` service because the
 host populates it after plugin registration. The plugin issues one nested

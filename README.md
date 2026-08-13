@@ -69,10 +69,12 @@ The selector proposes a safe migration from legacy `feeds` rows:
 Maintained feeds use immutable catalogue IDs. If a later plugin release corrects
 a selected feed URL, the plugin moves that feed's local validators, health,
 articles, and reader bodies to the replacement URL on normal local data access.
-That migration is atomic and makes no network request. New catalogue feeds are
-never selected automatically. Historical HTTP aliases may appear in catalogue
-metadata solely to recognize old configuration/state; the plugin never fetches
-those aliases as maintained current sources.
+That migration atomically unions state from every known historical alias, keeps
+current rows when identities overlap, preserves existing reader links, and makes
+no network request. New catalogue feeds are never selected automatically.
+Historical HTTP aliases may appear in catalogue metadata solely to recognize old
+configuration/state; the plugin never fetches those aliases as maintained current
+sources.
 
 ## Read and refresh
 
