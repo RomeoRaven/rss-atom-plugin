@@ -130,6 +130,25 @@ def test_packaged_catalogue_matches_v090_validation_report() -> None:
         "r/science",
         "RR protoAgent releases",
     }
+    by_name = {feed["name"]: feed for feed in catalog.feeds}
+    assert by_name["Wall Street Journal"]["category"] == "World"
+    report_by_name = {row["name"]: row for row in report["results"]}
+    generic_reason = (
+        "Direct public feed returned HTTP 200, parsed without warnings, exposed entries, fit its category, "
+        "and had no duplicate final URL."
+    )
+    for name in (
+        "BBC News",
+        "MarketWatch",
+        "Nature",
+        "Dev.to",
+        "Upstream protoAgent releases",
+        "Hermes Agent releases",
+        "Simon Willison",
+        "Wall Street Journal",
+        "Space.com",
+    ):
+        assert report_by_name[name]["reason"] != generic_reason
 
 
 def test_invalid_packaged_catalog_fails_closed(tmp_path: Path) -> None:

@@ -58,6 +58,22 @@ BOUNDS = {
     "Space.com": {"max_feed_size_kib": 1024},
 }
 
+CATEGORY_OVERRIDES = {
+    "Wall Street Journal": "World",
+}
+
+INCLUSION_REASONS = {
+    "BBC News": "The legacy configured URL was HTTP; the direct HTTPS form returned HTTP 200, parsed cleanly, and is packaged while the HTTP URL remains migration-only.",
+    "MarketWatch": "The legacy configured URL was HTTP; its direct public HTTPS replacement returned HTTP 200 and parsed cleanly.",
+    "Nature": "The legacy configured URL was HTTP; the publisher's canonical HTTPS feed returned HTTP 200 and parsed cleanly.",
+    "Dev.to": "A direct public developer-community feed; broad user-generated coverage is intentional for the Developer category, and the feed passed technical validation.",
+    "Upstream protoAgent releases": "A direct public project-release feed intentionally included for protoAgent operators; it passed technical validation and remains optional.",
+    "Hermes Agent releases": "A direct public project-release feed intentionally included for Hermes/protoAgent operators; it passed technical validation and remains optional.",
+    "Simon Willison": "A direct public individually operated technical feed intentionally included for its established developer relevance; it passed technical validation and remains optional.",
+    "Wall Street Journal": "The healthy direct feed is specifically WSJ World News, so it is included under World rather than the legacy Business category.",
+    "Space.com": "Original URL downgraded to HTTP; the publisher's About page identified an HTTPS replacement that returned clean RSS 2.0.",
+}
+
 
 def aliases(configured: str, requested: str, current: str) -> list[str]:
     values: list[str] = []
@@ -95,23 +111,25 @@ def main() -> int:
         included = name not in EXCLUDED
         if included:
             current = selected["final_url"]
+            category = CATEGORY_OVERRIDES.get(name, selected["category"])
             feed = {
                 "id": IDS[name],
-                "category": selected["category"],
+                "category": category,
                 "name": name,
                 "url": current,
                 "previous_urls": aliases(item["configured_url"], item["requested_url"], current),
                 **BOUNDS.get(name, {}),
             }
             catalog_feeds.append(feed)
-            reason = "Direct public feed returned HTTP 200, parsed without warnings, exposed entries, fit its category, and had no duplicate final URL."
-            if name == "Space.com":
-                reason = "Original URL downgraded to HTTP; the publisher's About page identified an HTTPS replacement that returned clean RSS 2.0."
+            reason = INCLUSION_REASONS.get(
+                name,
+                "Direct public feed returned HTTP 200, parsed without warnings, exposed entries, fit its category, and had no duplicate final URL.",
+            )
         else:
             reason = EXCLUDED[name]
         report_item = {
             "name": name,
-            "category": item["category"],
+            "category": CATEGORY_OVERRIDES.get(name, item["category"]),
             "recommendation": "include" if included else "exclude",
             "reason": reason,
             "configured_url": item["configured_url"],
