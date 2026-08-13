@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>News</title>
+  <script>
+    window.__base = location.pathname.split("/plugins/")[0];
+    document.write('<link rel="stylesheet" href="' + window.__base + '/_ds/plugin-kit.css">');
+  </script>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--pl-color-bg, #0b0e12); color: var(--pl-color-fg, #eef1f5); font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+    button, a { font: inherit; }
+    .shell { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); min-height: 100vh; }
+    .rail { padding: 22px 16px; border-right: 1px solid var(--pl-color-border, #29313a); background: var(--pl-color-bg-panel, #11161c); }
+    .eyebrow { margin: 0 0 6px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: 24px; line-height: 1.15; letter-spacing: -.025em; }
+    .rail-note { margin: 8px 0 12px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 12px; }
+    .help-link { display: inline-flex; margin-bottom: 18px; color: var(--pl-color-brand, #9f8cff); font-size: 12px; text-decoration: none; }
+    .help-link:hover, .help-link:focus-visible { text-decoration: underline; outline: none; }
+    .categories { display: grid; gap: 6px; }
+    .category { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; align-items: start; padding: 9px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+    .category:hover, .category:focus-visible { border-color: var(--pl-color-border, #39434f); outline: none; }
+    .category[aria-pressed="true"] { border-color: var(--pl-color-brand, #8b72ff); background: color-mix(in srgb, var(--pl-color-brand, #8b72ff) 14%, transparent); }
+    .category-name, .category-count { display: block; min-width: 0; }
+    .category-count { color: var(--pl-color-fg-muted, #9ca6b2); font: 11px/1.25 ui-monospace, SFMono-Regular, monospace; }
+    .main { min-width: 0; padding: 22px clamp(18px, 3vw, 38px) 48px; }
+    .toolbar { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
+    .toolbar-copy p { margin: 5px 0 0; color: var(--pl-color-fg-muted, #9ca6b2); }
+    .refresh { border: 1px solid var(--pl-color-border, #39434f); border-radius: 7px; padding: 8px 12px; background: var(--pl-color-bg-panel, #151b22); color: inherit; cursor: pointer; white-space: nowrap; }
+    .refresh:hover, .refresh:focus-visible { border-color: var(--pl-color-brand, #8b72ff); outline: none; }
+    .refresh:disabled { opacity: .55; cursor: not-allowed; }
+    .status { min-height: 22px; margin: 0 0 10px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 12px; }
+    .feed-health { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--pl-color-border, #39434f); border-radius: 7px; background: var(--pl-color-bg-panel, #11161c); color: var(--pl-color-fg-muted, #a8b0ba); font-size: 12px; }
+    .feed-health[data-state="error"] { border-color: #a65353; color: #ffd1d1; }
+    .feed-health[data-state="working"] { border-color: #39745b; color: #c7f4de; }
+    .source-heading { margin: 0 0 7px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 11px; }
+    .sources { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 20px; }
+    .source-control { display: inline-flex; align-items: stretch; border: 1px solid var(--pl-color-border, #39434f); border-radius: 999px; overflow: hidden; background: var(--pl-color-bg-panel, #11161c); }
+    .source-filter, .skip-toggle, .feed-refresh { border: 0; background: transparent; color: var(--pl-color-fg-muted, #a8b0ba); cursor: pointer; }
+    .source-filter { padding: 5px 9px; }
+    .source-filter:hover, .source-filter:focus-visible, .skip-toggle:hover, .skip-toggle:focus-visible, .feed-refresh:hover, .feed-refresh:focus-visible { color: var(--pl-color-fg, #eef1f5); outline: none; background: color-mix(in srgb, var(--pl-color-brand, #8b72ff) 10%, transparent); }
+    .source-filter[aria-pressed="true"] { color: var(--pl-color-fg, #eef1f5); background: color-mix(in srgb, var(--pl-color-brand, #8b72ff) 18%, transparent); }
+    .skip-toggle, .feed-refresh { display: grid; place-items: center; width: 30px; padding: 0; border-left: 1px solid var(--pl-color-border, #39434f); }
+    .skip-toggle svg, .feed-refresh svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .skip-toggle[aria-pressed="false"] { color: var(--pl-color-fg-subtle, #707986); background: color-mix(in srgb, var(--pl-color-bg, #0b0e12) 55%, transparent); }
+    .feed-refresh:disabled { opacity: .5; cursor: wait; }
+    .entries { display: grid; gap: 1px; border: 1px solid var(--pl-color-border, #29313a); border-radius: 9px; overflow: hidden; background: var(--pl-color-border, #29313a); }
+    .entry { padding: 16px 18px; background: var(--pl-color-bg-panel, #11161c); }
+    .entry-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 11px; }
+    .entry h2 { margin: 0; font-size: 16px; line-height: 1.35; }
+    .entry-excerpt { display: -webkit-box; margin: 7px 0 0; max-width: 80ch; overflow: hidden; color: var(--pl-color-fg-muted, #a8b0ba); -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
+    .entry-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 12px; }
+    .entry-action { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 9px; border: 1px solid var(--pl-color-border, #39434f); border-radius: 6px; color: var(--pl-color-fg, #eef1f5); font-size: 12px; text-decoration: none; }
+    .entry-action:hover, .entry-action:focus-visible { border-color: var(--pl-color-brand, #8b72ff); color: var(--pl-color-brand, #b5a8ff); outline: none; }
+    .entry-action-primary { background: color-mix(in srgb, var(--pl-color-brand, #8b72ff) 13%, transparent); }
+    .empty { padding: 32px 18px; background: var(--pl-color-bg-panel, #11161c); color: var(--pl-color-fg-muted, #9ca6b2); text-align: center; }
+    @media (max-width: 720px) { .shell { grid-template-columns: minmax(0, 1fr); width: 100%; overflow: hidden; } .rail, .main { width: 100%; min-width: 0; } .rail { border-right: 0; border-bottom: 1px solid var(--pl-color-border, #29313a); } .categories { display: flex; max-width: 100%; overflow-x: auto; padding-bottom: 4px; } .category { width: auto; min-width: max-content; } .toolbar { align-items: stretch; flex-direction: column; } .refresh { align-self: flex-start; } .skip-toggle, .feed-refresh { width: 36px; min-height: 36px; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <p class="eyebrow">RSS / Atom</p>
+      <h1>News</h1>
+      <p class="rail-note">Choose a category to narrow sources and stored articles.</p>
+      <a class="help-link" href="/plugins/rss_atom/help">Help &amp; feed guide</a>
+      <nav class="categories" id="category-selector" aria-label="Feed categories"></nav>
+    </aside>
+    <main class="main">
+      <header class="toolbar">
+        <div class="toolbar-copy">
+          <p class="eyebrow">Selected category</p>
+          <h1 id="category-title">Loading…</h1>
+          <p id="category-summary"></p>
+        </div>
+        <button class="refresh" id="refresh-category" type="button" disabled>Refresh category</button>
+      </header>
+      <p class="status" id="status" role="status">Loading configured feeds…</p>
+      <p class="feed-health" id="feed-health">Select a source to see its last refresh health.</p>
+      <p class="source-heading">Select a source to filter articles. The eye controls bulk refresh; the refresh icon updates only that source.</p>
+      <div class="sources" id="sources" aria-label="Filter articles by source"><button type="button" data-source="all">All feeds</button><button type="button" data-skip-toggle aria-label="Bulk refresh inclusion"></button><button type="button" data-feed-refresh aria-label="Refresh one feed"></button></div>
+      <section class="entries" id="entries" aria-label="Recent articles"></section>
+    </main>
+  </div>
+  <script type="module">
+    const kit = await import(window.__base + "/_ds/plugin-kit.js");
+    kit.initPluginView(() => { if (!state.loaded) load(); });
+    const skippedStorageKey = "rss_atom.skipped_feed_urls";
+    function readSkipped() { try { const value = JSON.parse(localStorage.getItem(skippedStorageKey) || "[]"); return new Set(Array.isArray(value) ? value.filter(url => typeof url === "string") : []); } catch { return new Set(); } }
+    const state = { category: "", source: "", feeds: [], entryCount: 0, skipped: readSkipped(), loaded: false };
+    const selector = document.getElementById("category-selector");
+    const title = document.getElementById("category-title");
+    const summary = document.getElementById("category-summary");
+    const sources = document.getElementById("sources");
+    const entries = document.getElementById("entries");
+    const status = document.getElementById("status");
+    const health = document.getElementById("feed-health");
+    const refresh = document.getElementById("refresh-category");
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[c]);
+    const fmt = (value) => { if (!value) return "Unknown time"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); };
+    const eyeIcon = (included) => included ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-2.2 2.8M6.2 6.2C3.8 8 2.5 12 2.5 12s3.5 6 9.5 6a10 10 0 0 0 3-.4M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+    const refreshIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5"/><path d="M19 11a7.5 7.5 0 1 0 .2 5"/></svg>';
+    function friendlyError(feed, error) {
+      const value = String(error || "");
+      const http = value.match(/HTTP (\d{3})/i);
+      if (/feed exceeds .*byte limit/i.test(value)) return `feed exceeds its configured ${feed.effective_max_feed_size_kib} KiB limit`;
+      if (http) return `source returned HTTP ${http[1]}. Try again; the source may be temporarily unavailable`;
+      if (/malformed feed/i.test(value)) return "source returned malformed RSS/Atom data";
+      if (/blocked by protoAgent egress policy/i.test(value)) return "source is blocked by protoAgent’s egress policy";
+      if (/deadline|timed? out/i.test(value)) return "source did not finish before the configured timeout";
+      return "source could not be refreshed; try again and check the feed URL if it continues";
+    }
+    function healthText(feed) {
+      if (!feed) return {state:"neutral", text:"Select a source to see its last refresh health."};
+      const attempt = feed.health || {};
+      const checked = attempt.checked_at ? ` Last checked ${fmt(attempt.checked_at)}.` : "";
+      const limits = ` Limit: ${feed.effective_max_items_per_refresh} items, ${feed.effective_max_feed_size_kib} KiB.`;
+      if (attempt.status === "error") return {state:"error", text:`Last refresh failed — ${friendlyError(feed, attempt.error)}.${checked}${limits}`};
+      if (attempt.status === "never_refreshed" || !attempt.status) return {state:"neutral", text:`Not checked yet — use this source’s refresh icon to test it.${limits}`};
+      if (attempt.status === "not_modified") return {state:"working", text:`Working — Source unchanged since the last check. ${feed.stored_count} articles stored.${checked}${limits}`};
+      if (Number(attempt.processed) === 0) return {state:"working", text:`Working — Source returned no entries. ${feed.stored_count} articles stored.${checked}${limits}`};
+      if (Number(attempt.inserted) === 0) return {state:"working", text:`Working — no new articles; ${attempt.duplicates} already stored. ${feed.stored_count} articles stored.${checked}${limits}`};
+      return {state:"working", text:`Working — imported ${attempt.inserted} new of ${attempt.processed} processed. ${feed.stored_count} articles stored.${checked}${limits}`};
+    }
+    function includedFeeds() { return state.feeds.filter(feed => !state.skipped.has(feed.url)).map(feed => feed.url); }
+    function saveSkipped() { localStorage.setItem(skippedStorageKey, JSON.stringify([...state.skipped].sort())); }
+    function updateRefreshState() {
+      const count = includedFeeds().length;
+      refresh.disabled = count === 0;
+      refresh.textContent = count ? `Refresh selected (${count})` : "Select a feed to refresh";
+      summary.textContent = `${state.feeds.length} configured feeds · ${state.entryCount} articles shown · ${count} selected for refresh`;
+    }
+    function renderSources() {
+      const allActive = !state.source;
+      const controls = state.feeds.map(feed => {
+        const included = !state.skipped.has(feed.url);
+        const action = included ? "Skip" : "Include";
+        return `<span class="source-control"><button class="source-filter" type="button" data-source="${esc(feed.name)}" aria-pressed="${feed.name === state.source}">${esc(feed.name)}</button><button class="skip-toggle" type="button" data-skip-toggle data-url="${esc(feed.url)}" aria-pressed="${included}" aria-label="${action} ${esc(feed.name)} in bulk refresh" title="${action} ${esc(feed.name)} in bulk refresh">${eyeIcon(included)}</button><button class="feed-refresh" type="button" data-feed-refresh data-url="${esc(feed.url)}" data-name="${esc(feed.name)}" aria-label="Refresh ${esc(feed.name)} now" title="Refresh ${esc(feed.name)} now">${refreshIcon}</button></span>`;
+      }).join("");
+      sources.innerHTML = `<span class="source-control"><button class="source-filter" type="button" data-source="all" aria-pressed="${allActive}">All feeds</button></span>${controls}`;
+      sources.querySelectorAll("[data-source]").forEach(button => button.addEventListener("click", () => load(state.category, button.dataset.source === "all" ? "" : button.dataset.source)));
+      sources.querySelectorAll("[data-skip-toggle]").forEach(button => button.addEventListener("click", () => {
+        const url = button.dataset.url;
+        if (state.skipped.has(url)) state.skipped.delete(url); else state.skipped.add(url);
+        saveSkipped();
+        renderSources();
+        updateRefreshState();
+      }));
+      sources.querySelectorAll("[data-feed-refresh]").forEach(button => button.addEventListener("click", () => refreshFeeds([button.dataset.url], button.dataset.name)));
+    }
+    function render(data) {
+      state.loaded = true;
+      state.category = data.selected_category;
+      state.source = data.selected_source || "";
+      state.feeds = data.feeds;
+      state.entryCount = data.entries.length;
+      selector.innerHTML = data.categories.map(c => `<button class="category" type="button" data-category="${esc(c.name)}" aria-pressed="${c.name === state.category}"><span class="category-name">${esc(c.name)}</span><span class="category-count">${c.feed_count} feeds · ${c.entry_count} items</span></button>`).join("");
+      selector.querySelectorAll("[data-category]").forEach(button => button.addEventListener("click", () => load(button.dataset.category, "")));
+      title.textContent = state.source ? `${state.category} · ${state.source}` : state.category;
+      renderSources();
+      const selectedFeed = state.source ? state.feeds.find(feed => feed.name === state.source) : null;
+      const feedHealth = healthText(selectedFeed);
+      health.dataset.state = feedHealth.state;
+      health.textContent = feedHealth.text;
+      entries.innerHTML = data.entries.length ? data.entries.map(entry => {
+        const readerAction = entry.has_reader ? `<a class="entry-action entry-action-primary" href="/plugins/rss_atom/reader/${encodeURIComponent(entry.reader_id)}">Read here</a>` : "";
+        const sourceAction = entry.link ? `<a class="entry-action" href="${esc(entry.link)}" target="_blank" rel="noopener noreferrer">Open source</a>` : "";
+        return `<article class="entry"><div class="entry-meta"><span>${esc(entry.source)}</span><span>${esc(fmt(entry.published))}</span></div><h2>${esc(entry.title || "Untitled")}</h2>${entry.excerpt ? `<p class="entry-excerpt">${esc(entry.excerpt)}</p>` : ""}<div class="entry-actions">${readerAction}${sourceAction}</div></article>`;
+      }).join("") : `<div class="empty">No stored articles match this selection. Select a source to see its refresh health above.</div>`;
+      status.textContent = "";
+      updateRefreshState();
+    }
+    async function load(category = state.category, source = state.source) {
+      status.textContent = "Loading selection…";
+      const params = new URLSearchParams();
+      if (category) params.set("category", category);
+      if (source) params.set("source", source);
+      const query = params.size ? `?${params}` : "";
+      const response = await kit.apiFetch(`/api/plugins/rss_atom/news${query}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || data.error || "Could not load news");
+      render(data);
+    }
+    async function refreshFeeds(feedUrls, label) {
+      if (!feedUrls.length) return;
+      refresh.disabled = true;
+      sources.querySelectorAll("[data-feed-refresh]").forEach(button => { button.disabled = true; });
+      status.textContent = feedUrls.length === 1 ? `Refreshing ${label}…` : `Refreshing ${feedUrls.length} selected feeds in ${state.category}…`;
+      try {
+        const response = await kit.apiFetch("/api/plugins/rss_atom/refresh-category", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({category:state.category, feed_urls: feedUrls})});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || data.error || "Refresh failed");
+        status.textContent = `${feedUrls.length === 1 ? `Refreshed ${label}` : `Refreshed ${data.refreshed} feeds`} · ${data.inserted} new articles · ${data.failed} failed`;
+        await load(state.category, state.source);
+      } catch (error) {
+        status.textContent = error.message;
+        updateRefreshState();
+      } finally {
+        sources.querySelectorAll("[data-feed-refresh]").forEach(button => { button.disabled = false; });
+      }
+    }
+    refresh.addEventListener("click", () => {
+      const includedFeeds = state.feeds.filter(feed => !state.skipped.has(feed.url)).map(feed => feed.url);
+      refreshFeeds(includedFeeds, state.category);
+    });
+  </script>
+</body>
+</html>

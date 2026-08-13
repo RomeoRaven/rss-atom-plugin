@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Reader</title>
+  <script>
+    window.__base = location.pathname.split("/plugins/")[0];
+    const kitCss = document.createElement("link");
+    kitCss.rel = "stylesheet";
+    kitCss.href = window.__base + "/_ds/plugin-kit.css";
+    document.head.appendChild(kitCss);
+  </script>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--pl-color-bg, #0b0e12); color: var(--pl-color-fg, #eef1f5); font: 16px/1.7 ui-sans-serif, system-ui, sans-serif; }
+    a { color: var(--pl-color-brand, #a997ff); }
+    .reader-shell { width: min(920px, 100%); margin: 0 auto; padding: clamp(20px, 5vw, 56px) clamp(16px, 5vw, 52px) 80px; }
+    .reader-nav { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding-bottom: 18px; border-bottom: 1px solid var(--pl-color-border, #29313a); }
+    .reader-nav a { text-decoration: none; }
+    .reader-nav a:hover, .reader-nav a:focus-visible { text-decoration: underline; outline: none; }
+    .reader-header { padding: clamp(28px, 7vw, 64px) 0 24px; }
+    .reader-meta { margin: 0 0 9px; color: var(--pl-color-fg-muted, #9ca6b2); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(30px, 6vw, 54px); line-height: 1.08; letter-spacing: -.045em; }
+    .source-action { display: inline-flex; margin-top: 20px; padding: 8px 12px; border: 1px solid var(--pl-color-border, #39434f); border-radius: 7px; text-decoration: none; }
+    .source-action:hover, .source-action:focus-visible { border-color: var(--pl-color-brand, #8b72ff); outline: none; }
+    .reader-content { overflow-wrap: anywhere; }
+    .reader-content h2, .reader-content h3, .reader-content h4, .reader-content h5, .reader-content h6 { margin: 1.9em 0 .55em; line-height: 1.2; letter-spacing: -.02em; }
+    .reader-content h2 { padding-top: .6em; border-top: 1px solid var(--pl-color-border, #29313a); font-size: clamp(24px, 4vw, 34px); }
+    .reader-content h3 { font-size: clamp(20px, 3vw, 27px); }
+    .reader-content p, .reader-content li, .reader-content blockquote { max-width: 76ch; }
+    .reader-content blockquote { margin: 1.5em 0; padding: 2px 0 2px 18px; border-left: 3px solid var(--pl-color-brand, #8b72ff); color: var(--pl-color-fg-muted, #b6bdc7); }
+    .reader-content pre { max-width: 100%; overflow: auto; padding: 16px; border: 1px solid var(--pl-color-border, #29313a); border-radius: 8px; background: var(--pl-color-bg-panel, #11161c); font: 13px/1.55 ui-monospace, SFMono-Regular, monospace; }
+    .reader-content code { font: .88em/1.5 ui-monospace, SFMono-Regular, monospace; }
+    .reader-content :not(pre) > code { padding: 2px 5px; border-radius: 4px; background: var(--pl-color-bg-panel, #151b22); }
+    .reader-content hr { margin: 2.4em 0; border: 0; border-top: 1px solid var(--pl-color-border, #29313a); }
+    .reader-status { color: var(--pl-color-fg-muted, #9ca6b2); }
+    @media (max-width: 520px) { .reader-nav { align-items: flex-start; flex-direction: column; } .reader-shell { padding-bottom: 54px; } }
+  </style>
+</head>
+<body>
+  <main class="reader-shell">
+    <nav class="reader-nav" aria-label="Reader navigation"><strong>RSS / Atom Reader</strong><a href="/plugins/rss_atom/view">Back to News</a></nav>
+    <header class="reader-header">
+      <p class="reader-meta" id="reader-meta">Loading article…</p>
+      <h1 id="reader-title">Reader</h1>
+      <a class="source-action" id="reader-source" href="#" target="_blank" rel="noopener noreferrer" hidden>Open canonical source</a>
+    </header>
+    <p class="reader-status" id="reader-status" role="status">Loading safe reader content…</p>
+    <article class="reader-content" id="reader-content"></article>
+  </main>
+  <script type="module">
+    const kit = await import(window.__base + "/_ds/plugin-kit.js");
+    const readerId = location.pathname.split("/").filter(Boolean).at(-1);
+    const title = document.getElementById("reader-title");
+    const meta = document.getElementById("reader-meta");
+    const source = document.getElementById("reader-source");
+    const status = document.getElementById("reader-status");
+    const content = document.getElementById("reader-content");
+    const fmt = (value) => { if (!value) return "Unknown time"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString([], {dateStyle:"medium",timeStyle:"short"}); };
+    async function loadReader() {
+      const response = await kit.apiFetch(`/api/plugins/rss_atom/reader/${encodeURIComponent(readerId)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Reader content is unavailable");
+      document.title = `${data.title || "Untitled"} · Reader`;
+      title.textContent = data.title || "Untitled";
+      meta.textContent = `${data.source} · ${fmt(data.published)}`;
+      if (data.link) { source.href = data.link; source.hidden = false; }
+      // Server contract: reader_html is stored only after the nh3 allowlist sanitizer
+      // strips active content, unsafe URLs, styles, IDs, classes, and event handlers.
+      content.innerHTML = data.reader_html;
+      status.textContent = "";
+    }
+    loadReader().catch(error => { status.textContent = error.message; });
+  </script>
+</body>
+</html>

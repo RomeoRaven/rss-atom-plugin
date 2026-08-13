@@ -1,6 +1,6 @@
 id: rss_atom
 name: RSS / Atom Intake
-version: 0.1.0
+version: 0.8.0
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.
@@ -8,17 +8,61 @@ repository: https://github.com/RomeoRaven/rss-atom-plugin
 homepage: https://agent.protolabs.studio
 enabled: false
 config_section: rss_atom
+guide_url: /plugins/rss_atom/help
+public_paths:
+  - /plugins/rss_atom/help
 config:
   feeds: []
+  max_items_per_refresh: 100
+  default_recent_items: 20
   max_bytes: 262144
   timeout_seconds: 15
   max_entries_per_feed: 1000
+settings:
+  - key: feeds
+    label: Feeds
+    type: string_list
+    description: "One feed per row: Category | Name | URL | optional max size KiB | optional items per refresh (legacy 2- and 3-field rows remain valid)"
+  - key: max_items_per_refresh
+    label: Items processed per refresh
+    type: number
+    minimum: 1
+    maximum: 100
+    description: "Maximum entries processed from one fetched feed document. Newest entries are processed first."
+  - key: default_recent_items
+    label: Recent items returned by default
+    type: number
+    minimum: 1
+    maximum: 100
+    description: "Items returned when the agent asks for recent entries without giving a limit."
+  - key: max_entries_per_feed
+    label: Entries retained per feed
+    type: number
+    minimum: 1
+    maximum: 10000
+    description: "Maximum durable entries kept for each feed; oldest entries are pruned after a successful refresh."
+  - key: max_feed_size_kib
+    label: Maximum feed size (KiB)
+    type: number
+    minimum: 1
+    maximum: 2048
+    description: "Maximum decompressed response size accepted for one feed refresh."
+  - key: timeout_seconds
+    label: Refresh timeout (seconds)
+    type: number
+    minimum: 1
+    maximum: 60
+    description: "Total deadline for validation, redirects, download, and parsing of one feed refresh."
 requires_pip:
   - { pkg: "feedparser>=6.0.14,<7", scope: host }
   - { pkg: "httpx>=0.27,<1", scope: host }
+  - { pkg: "markdown-it-py>=3,<5", scope: host }
+  - { pkg: "nh3==0.3.6", scope: host }
 capabilities:
   network:
     - configured RSS/Atom feed hosts
   filesystem: scoped
+views:
+  - { id: news, label: "News", icon: "Newspaper", path: "/plugins/rss_atom/view" }
 emits: []
 subscribes: []
