@@ -206,7 +206,6 @@
       const includedFeeds = state.feeds.filter(feed => !state.skipped.has(feed.url)).map(feed => feed.url);
       refreshFeeds(includedFeeds, state.category);
     });
-    window.setTimeout(() => { if (!state.loaded) load().catch(error => { status.textContent = error.message; }); }, 600);
   </script>
 </body>
 </html>

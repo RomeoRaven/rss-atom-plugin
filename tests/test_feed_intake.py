@@ -310,6 +310,30 @@ def test_reader_body_retention_is_independent_from_metadata_retention(tmp_path: 
     assert intake.count_entries(feed_urls=[url]) == 25
 
 
+def test_reader_body_retention_selects_newest_published_entries_from_oldest_first_feed(tmp_path: Path):
+    url = "https://feeds.example/oldest-first"
+    content = "<h2>Full item</h2><p>" + ("reader content " * 40) + "</p>"
+    items = "".join(
+        f"<item><guid>day-{day}</guid><title>Day {day}</title>"
+        f"<pubDate>{day:02d} Aug 2026 12:00:00 GMT</pubDate>"
+        f"<description><![CDATA[{content}]]></description></item>"
+        for day in range(1, 26)
+    )
+    body = f'<rss version="2.0"><channel>{items}</channel></rss>'.encode()
+    intake = FeedIntake(
+        tmp_path / "feeds.db",
+        FixtureTransport({url: [Response(200, {}, body)]}),
+        check_url=allow_public,
+    )
+
+    intake.refresh(url)
+
+    listed = {entry["entry_id"]: entry for entry in intake.recent_entries_with_reader(limit=100)}
+    assert {entry_id for entry_id, entry in listed.items() if entry["has_reader"]} == {
+        f"day-{day}" for day in range(6, 26)
+    }
+
+
 def test_explicit_refresh_removes_stale_reader_when_same_entry_becomes_source_only(tmp_path: Path):
     url = "https://feeds.example/changes"
     long_content = "<h2>Full item</h2><p>" + ("reader content " * 40) + "</p>"

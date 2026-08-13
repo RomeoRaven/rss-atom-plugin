@@ -51,6 +51,10 @@ network access. Plain-text fallback is capped at 64 KiB UTF-8; list excerpts are
 capped at 400 characters. Optional sanitized bodies live in a separate table and
 are capped at 128 KiB, 5,000 elements, 1,000 links, and the newest 20 meaningful
 bodies per feed while metadata retention remains independently configurable.
+The body cap selects newest usable publication timestamps first and preserves
+stable feed/storage order for entries without a usable timestamp. Legacy
+`max_bytes` remains an exact bounded fallback unless `max_feed_size_kib` is
+explicitly configured.
 
 ## HTTP policy
 

@@ -144,13 +144,20 @@ def _feed(name: str) -> dict[str, Any]:
 def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
     cfg = _config()
     try:
-        default_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
+        if "max_feed_size_kib" in cfg:
+            default_max_bytes = max(1024, min(int(cfg["max_feed_size_kib"]) * 1024, 2 * 1024 * 1024))
+        else:
+            default_max_bytes = max(1024, min(int(cfg.get("max_bytes", 262144)), 2 * 1024 * 1024))
         timeout_seconds = max(1.0, min(float(cfg.get("timeout_seconds", 15)), 60.0))
         max_entries = max(1, min(int(cfg.get("max_entries_per_feed", 1000)), 10000))
         default_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 100))
     except (TypeError, ValueError) as exc:
         raise ValueError("RSS/Atom numeric settings must contain valid numbers") from exc
-    max_feed_size_kib = int((feed or {}).get("max_feed_size_kib", default_feed_size_kib))
+    max_bytes = (
+        int((feed or {}).get("max_feed_size_kib", 0)) * 1024
+        if (feed or {}).get("max_feed_size_kib")
+        else default_max_bytes
+    )
     max_items = int((feed or {}).get("max_items_per_refresh", default_items))
     try:
         from security import egress
@@ -164,7 +171,7 @@ def _intake(feed: dict[str, Any] | None = None) -> FeedIntake:
         _data_dir() / "feeds.db",
         _transport,
         check_url=egress_policy,
-        max_bytes=max_feed_size_kib * 1024,
+        max_bytes=max_bytes,
         timeout_seconds=timeout_seconds,
         max_entries_per_feed=max_entries,
         max_items_per_refresh=max_items,
@@ -209,7 +216,10 @@ def _news_payload(category: str = "", source: str = "") -> dict[str, Any]:
         selected_source = source_feed["name"]
     intake = _intake()
     cfg = _config()
-    default_feed_size_kib = max(1, min(int(cfg.get("max_feed_size_kib", 256)), 2048))
+    if "max_feed_size_kib" in cfg:
+        default_feed_size_kib = max(1, min(int(cfg["max_feed_size_kib"]), 2048))
+    else:
+        default_feed_size_kib = max(1, min((int(cfg.get("max_bytes", 262144)) + 1023) // 1024, 2048))
     default_items = max(1, min(int(cfg.get("max_items_per_refresh", 100)), 100))
     configured_default = max(1, min(int(_config().get("default_recent_items", 20)), 100))
     category_rows = []

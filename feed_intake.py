@@ -331,6 +331,16 @@ def _reader_id(feed_url: str, entry_id: str) -> str:
     return hashlib.sha256(f"{feed_url}\x1f{entry_id}".encode()).hexdigest()
 
 
+def _published_rank(value: str) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return float("-inf")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except (OverflowError, ValueError):
+        return float("-inf")
+
+
 def _bounded_plain_text(value: str) -> str:
     text = _plain_text(value)
     encoded = text.encode("utf-8")
@@ -639,7 +649,8 @@ class FeedIntake:
                     stored_entry,
                 )
             bodies_written = 0
-            for entry in retained:
+            body_candidates = sorted(retained, key=lambda entry: _published_rank(entry["published"]), reverse=True)
+            for entry in body_candidates:
                 body = str(entry.get("reader_html") or "")
                 version = 1
                 if not body and entry["entry_id"] not in normalized_ids:

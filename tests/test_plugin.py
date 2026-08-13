@@ -346,6 +346,53 @@ def test_refresh_uses_per_feed_size_and_item_limits(tmp_path, monkeypatch):
     assert payload["inserted"] == 10
 
 
+def test_legacy_max_bytes_remains_effective_unless_new_kib_setting_is_explicit(tmp_path, monkeypatch):
+    result = _load_plugin(
+        tmp_path,
+        monkeypatch,
+        ["Legacy | https://feeds.example/rss"],
+        max_bytes=333333,
+    )
+    loaded_module = sys.modules["protoagent_plugin_rss_atom"]
+    calls = []
+
+    class OfflineTransport:
+        def request(self, url, headers, *, timeout_seconds, max_bytes):
+            calls.append(max_bytes)
+            return Response(200, {}, b'<rss version="2.0"><channel></channel></rss>')
+
+    loaded_module._transport = OfflineTransport()
+    from security.egress import set_allowed_hosts
+
+    set_allowed_hosts(["feeds.example"])
+    refresh = next(tool for tool in result.tools if tool.name == "rss_refresh_feed")
+    assert json.loads(refresh.invoke({"name": "Legacy"}))["status"] == "updated"
+    assert calls == [333333]
+
+    explicit_root = tmp_path / "explicit"
+    explicit_root.mkdir()
+    explicit = _load_plugin(
+        explicit_root,
+        monkeypatch,
+        ["Modern | https://feeds.example/modern"],
+        max_bytes=333333,
+        max_feed_size_kib=512,
+    )
+    explicit_module = sys.modules["protoagent_plugin_rss_atom"]
+    explicit_calls = []
+
+    class ExplicitTransport:
+        def request(self, url, headers, *, timeout_seconds, max_bytes):
+            explicit_calls.append(max_bytes)
+            return Response(200, {}, b'<rss version="2.0"><channel></channel></rss>')
+
+    explicit_module._transport = ExplicitTransport()
+    set_allowed_hosts(["feeds.example"])
+    explicit_refresh = next(tool for tool in explicit.tools if tool.name == "rss_refresh_feed")
+    assert json.loads(explicit_refresh.invoke({"name": "Modern"}))["status"] == "updated"
+    assert explicit_calls == [512 * 1024]
+
+
 def test_per_feed_item_limit_above_hard_ceiling_fails_closed(tmp_path, monkeypatch):
     result = _load_plugin(
         tmp_path,
@@ -646,6 +693,7 @@ def test_news_list_and_dedicated_reader_api_keep_structured_body_off_the_list(tm
     assert "Open source" in news_page.text
     assert "-webkit-line-clamp: 5" in news_page.text
     assert "/plugins/rss_atom/reader/" in news_page.text
+    assert "window.setTimeout" not in news_page.text
 
     assert client.get("/api/plugins/rss_atom/reader/not-a-reader-id").status_code == 404
     assert client.get("/plugins/rss_atom/reader/not-a-reader-id").status_code == 404

@@ -118,6 +118,9 @@ plugins:
 State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
 `RSS_ATOM_DATA_DIR` to choose another instance-scoped location.
 
+Existing configurations that still define `max_bytes` remain effective until
+`max_feed_size_kib` is explicitly set; the newer KiB setting takes precedence.
+
 ## Safety and lifecycle
 
 - pA `security.egress.check_url` runs before every request and redirect.
@@ -131,8 +134,9 @@ State defaults to `$PROTOAGENT_HOME/rss_atom/feeds.db`. Set
   allowlist. Scripts, styles, SVG, forms, media/embeds, inline styles/classes/IDs,
   event handlers, relative links, and non-HTTP(S) URL schemes are removed.
 - Reader bodies are independently capped at 128 KiB, 5,000 elements, 1,000 links,
-  and the newest 20 meaningful bodies per feed. Metadata retention remains at
-  the configured value (default 1,000 entries per feed).
+  and the newest 20 meaningful bodies per feed by publication time. Entries
+  without a usable publication time retain stable feed/storage order. Metadata
+  retention remains at the configured value (default 1,000 entries per feed).
 - New reader bodies are created only by explicit later refreshes. No migration,
   configuration change, page load, or reader action fetches a feed or source page.
 - Refreshes are operator-triggered and serialized in-process.
