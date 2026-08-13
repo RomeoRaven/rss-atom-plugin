@@ -416,6 +416,10 @@ class FeedIntake:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            self._init_db_locked()
+
+    def _init_db_locked(self) -> None:
         with self._connect() as db:
             db.executescript(
                 """

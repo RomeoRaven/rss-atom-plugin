@@ -1,4 +1,5 @@
 import base64
+import concurrent.futures
 import json
 import sqlite3
 import subprocess
@@ -230,6 +231,37 @@ def test_reader_id_migration_backfills_existing_reader_body_without_network(tmp_
     assert detail["reader_html"] == "<h2>Preserved</h2><p>Reader body</p>"
     with sqlite3.connect(db_path) as db:
         assert db.execute("SELECT reader_id FROM reader_bodies").fetchone()[0] == listed["reader_id"]
+
+
+def test_concurrent_first_use_serializes_legacy_schema_migration(tmp_path: Path):
+    for round_number in range(20):
+        db_path = tmp_path / f"legacy-{round_number}.db"
+        with sqlite3.connect(db_path) as db:
+            db.execute(
+                """
+                CREATE TABLE feeds (
+                    url TEXT PRIMARY KEY,
+                    etag TEXT NOT NULL DEFAULT '',
+                    last_modified TEXT NOT NULL DEFAULT '',
+                    last_status TEXT NOT NULL DEFAULT '',
+                    last_error TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+        barrier = threading.Barrier(8)
+
+        def initialize() -> None:
+            barrier.wait()
+            FeedIntake(db_path, FixtureTransport({}), check_url=allow_public)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(initialize) for _ in range(8)]
+            for future in futures:
+                future.result()
+
+        with sqlite3.connect(db_path) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(feeds)")}
+        assert {"last_checked", "last_processed", "last_inserted", "last_duplicates"} <= columns
 
 
 @pytest.mark.parametrize(
