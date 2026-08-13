@@ -188,6 +188,8 @@ def test_bundled_readme_help_is_safe_offline_and_linked_from_news(tmp_path, monk
     assert '<script id="readme-script">' not in help_page.text
     assert "&lt;script id=&quot;readme-script&quot;&gt;" in help_page.text
     assert 'href="/plugins/rss_atom/help"' in news_page.text
+    assert 'href="sources">Manage sources</a>' in news_page.text
+    assert 'href="/plugins/rss_atom/sources">Manage sources</a>' not in news_page.text
 
 
 def test_bundled_readme_help_contains_beta_install_selector_and_no_refresh_contract(tmp_path, monkeypatch):
@@ -799,6 +801,8 @@ def test_catalogue_selector_proposes_legacy_migration_and_saves_only_plugin_owne
     assert 'id="catalog-search"' in shell.text
     assert 'id="catalogue"' in shell.text
     assert 'id="custom-feeds"' in shell.text
+    assert 'href="view">Back to News</a>' in shell.text
+    assert 'href="/plugins/rss_atom/view">Back to News</a>' not in shell.text
     assert 'id="save-sources"' in shell.text
     assert "Upstream protoAgent releases" not in shell.text
     assert "Fixture custom" not in shell.text
