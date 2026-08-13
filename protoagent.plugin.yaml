@@ -1,6 +1,7 @@
 id: rss_atom
 name: RSS / Atom Intake
-version: 0.8.1
+version: 0.9.0
+min_protoagent_version: "0.135.0"
 description: >-
   Safe durable intake for operator-configured RSS and Atom feeds with bounded
   refresh, normalized provenance, HTTP validators, and deduplication.
@@ -11,9 +12,14 @@ config_section: rss_atom
 guide_url: /plugins/rss_atom/help
 public_paths:
   - /plugins/rss_atom/help
+  - /plugins/rss_atom/sources
   - /plugins/rss_atom/reader/
 config:
   feeds: []
+  catalogue_configured: false
+  selected_feed_ids: []
+  catalogue_overrides: {}
+  custom_feeds: []
   max_items_per_refresh: 100
   default_recent_items: 20
   max_bytes: 262144
@@ -21,9 +27,9 @@ config:
   max_entries_per_feed: 1000
 settings:
   - key: feeds
-    label: Feeds
+    label: Legacy feed rows
     type: string_list
-    description: "One feed per row: Category | Name | URL | optional max size KiB | optional items per refresh (legacy 2- and 3-field rows remain valid)"
+    description: "Compatibility input for v0.8 and earlier. Use News → Manage sources for maintained and custom feeds."
   - key: max_items_per_refresh
     label: Items processed per refresh
     type: number

@@ -391,6 +391,153 @@ def test_explicit_refresh_removes_stale_reader_when_same_entry_becomes_source_on
     assert intake.reader_entry(str(second["reader_id"])) is None
 
 
+def test_catalog_url_migration_preserves_validators_entries_and_reader_bodies_without_network(tmp_path: Path):
+    old_url = "https://feeds.example/old"
+    new_url = "https://feeds.example/current"
+    db_path = tmp_path / "feeds.db"
+    transport = FixtureTransport({})
+    intake = FeedIntake(db_path, transport, check_url=allow_public)
+    original_reader_id = "0" * 64
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "INSERT INTO feeds(url, etag, last_modified, last_status, last_error, last_checked, last_processed, last_inserted, last_duplicates) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (old_url, '"v1"', "Tue, 11 Aug 2026 13:01:00 GMT", "updated", "", "2026-08-12T18:00:00Z", 3, 2, 1),
+        )
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'entry-1', 'Preserved', 'https://news.example/1', '2026-08-12T12:00:00Z', 'Summary')",
+            (old_url,),
+        )
+        db.execute(
+            "INSERT INTO reader_bodies VALUES(?, 'entry-1', ?, 1, '<h2>Preserved</h2><p>Reader body remains.</p>')",
+            (old_url, original_reader_id),
+        )
+
+    result = intake.migrate_feed_url(old_url, new_url)
+
+    assert result == {"status": "migrated", "entries": 1, "reader_bodies": 1}
+    assert transport.calls == []
+    assert intake.feed_status(old_url)["status"] == "never_refreshed"
+    assert intake.feed_status(new_url) | {"checked_at": "<timestamp>"} == {
+        "status": "updated",
+        "error": "",
+        "checked_at": "<timestamp>",
+        "processed": 3,
+        "inserted": 2,
+        "duplicates": 1,
+    }
+    listed = intake.recent_entries_with_reader(limit=1, feed_url=new_url)[0]
+    assert listed["feed_url"] == new_url
+    assert listed["has_reader"] is True
+    assert listed["reader_id"] == original_reader_id
+    assert intake.reader_entry(original_reader_id)["reader_html"].startswith("<h2>Preserved")
+
+    refreshed_reader_text = "updated reader content " * 40
+    refreshed_body = f"""<rss version="2.0"><channel><item><guid>entry-1</guid><title>Preserved</title>
+    <link>https://news.example/1</link><pubDate>Wed, 12 Aug 2026 12:00:00 GMT</pubDate>
+    <description><![CDATA[<h2>Updated</h2><p>{refreshed_reader_text}</p>]]></description>
+    </item></channel></rss>""".encode()
+    transport.responses[new_url] = [Response(200, {}, refreshed_body)]
+    intake.refresh(new_url)
+    refreshed = intake.recent_entries_with_reader(limit=1, feed_url=new_url)[0]
+    assert refreshed["has_reader"] is True
+    assert refreshed["reader_id"] == original_reader_id
+    assert intake.reader_entry(original_reader_id)["reader_html"].startswith("<h2>Updated")
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM feeds WHERE url = ?", (old_url,)).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0] == 0
+        assert db.execute("SELECT count(*) FROM reader_bodies WHERE feed_url = ?", (old_url,)).fetchone()[0] == 0
+
+
+def test_catalog_url_migration_unions_destination_state_without_overwriting_current_rows(tmp_path: Path):
+    old_url = "https://feeds.example/old"
+    new_url = "https://feeds.example/current"
+    db_path = tmp_path / "feeds.db"
+    intake = FeedIntake(db_path, FixtureTransport({}), check_url=allow_public)
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO feeds(url, etag) VALUES(?, 'old')", (old_url,))
+        db.execute("INSERT INTO feeds(url, etag) VALUES(?, 'new')", (new_url,))
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'same', 'Old', '', '', 'old')",
+            (old_url,),
+        )
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'same', 'New', '', '', 'new')",
+            (new_url,),
+        )
+        db.execute(
+            "INSERT INTO entries VALUES(?, 'old-only', 'Old only', 'https://news.example/old-only', '', 'preserve me')",
+            (old_url,),
+        )
+        db.execute(
+            "INSERT INTO reader_bodies VALUES(?, 'old-only', ?, 1, '<h2>Old only</h2><p>Preserved reader body.</p>')",
+            (old_url, "1" * 64),
+        )
+
+    result = intake.migrate_feed_url(old_url, new_url)
+
+    assert result == {"status": "migrated", "entries": 2, "reader_bodies": 1}
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM feeds WHERE url = ?", (old_url,)).fetchone()[0] == 0
+        assert db.execute("SELECT etag FROM feeds WHERE url = ?", (new_url,)).fetchone()[0] == "new"
+        assert (
+            db.execute("SELECT summary FROM entries WHERE feed_url = ? AND entry_id = 'same'", (new_url,)).fetchone()[0]
+            == "new"
+        )
+        assert (
+            db.execute(
+                "SELECT summary FROM entries WHERE feed_url = ? AND entry_id = 'old-only'", (new_url,)
+            ).fetchone()[0]
+            == "preserve me"
+        )
+        assert (
+            db.execute(
+                "SELECT reader_id FROM reader_bodies WHERE feed_url = ? AND entry_id = 'old-only'", (new_url,)
+            ).fetchone()[0]
+            == "1" * 64
+        )
+
+
+def test_catalog_url_migration_rekeys_guidless_entries_without_duplicate_on_next_refresh(tmp_path: Path):
+    old_url = "https://feeds.example/old-guidless"
+    new_url = "https://feeds.example/current-guidless"
+    body = b"""<rss version="2.0"><channel><item><title>Guidless</title>
+    <link>https://news.example/guidless</link><pubDate>Wed, 12 Aug 2026 12:00:00 GMT</pubDate>
+    <description>Stable summary</description></item></channel></rss>"""
+    transport = FixtureTransport({old_url: [Response(200, {}, body)], new_url: [Response(200, {}, body)]})
+    intake = FeedIntake(tmp_path / "feeds.db", transport, check_url=allow_public)
+
+    intake.refresh(old_url)
+    old_entry_id = intake.recent_entries(feed_urls=[old_url])[0]["entry_id"]
+    intake.migrate_feed_url(old_url, new_url)
+    migrated_entry_id = intake.recent_entries(feed_urls=[new_url])[0]["entry_id"]
+    intake.refresh(new_url)
+    rows = intake.recent_entries(feed_urls=[new_url])
+
+    assert migrated_entry_id != old_entry_id
+    assert len(rows) == 1
+    assert rows[0]["entry_id"] == migrated_entry_id
+
+
+def test_catalog_url_migration_unions_multiple_historical_aliases_into_current_url(tmp_path: Path):
+    first = "http://feeds.example/old"
+    second = "https://feeds.example/old"
+    current = "https://feeds.example/current"
+    db_path = tmp_path / "feeds.db"
+    intake = FeedIntake(db_path, FixtureTransport({}), check_url=allow_public)
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO entries VALUES(?, 'first', 'First', '', '', 'one')", (first,))
+        db.execute("INSERT INTO entries VALUES(?, 'second', 'Second', '', '', 'two')", (second,))
+
+    assert intake.migrate_feed_url(first, current)["status"] == "migrated"
+    assert intake.migrate_feed_url(second, current)["status"] == "migrated"
+    assert intake.migrate_feed_url(first, current)["status"] == "not_found"
+
+    rows = {row["entry_id"]: row for row in intake.recent_entries(feed_urls=[current])}
+    assert set(rows) == {"first", "second"}
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT count(*) FROM entries WHERE feed_url IN (?, ?)", (first, second)).fetchone()[0] == 0
+
+
 def test_atom_revalidation_deduplicates_and_304_preserves_entries(tmp_path: Path):
     url = "https://feeds.example/atom"
     transport = FixtureTransport(

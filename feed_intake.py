@@ -331,6 +331,10 @@ def _reader_id(feed_url: str, entry_id: str) -> str:
     return hashlib.sha256(f"{feed_url}\x1f{entry_id}".encode()).hexdigest()
 
 
+def _fallback_entry_id(feed_url: str, link: str, title: str, published: str) -> str:
+    return hashlib.sha256("\x1f".join((feed_url, link, title, published)).encode()).hexdigest()
+
+
 def _published_rank(value: str) -> float:
     text = str(value or "").strip()
     if not text:
@@ -470,6 +474,84 @@ class FeedIntake:
                     )
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS reader_bodies_reader_id ON reader_bodies(reader_id)")
 
+    def migrate_feed_url(self, old_url: str, new_url: str) -> dict[str, int | str]:
+        """Move durable state to a maintained replacement URL without network access."""
+        if old_url == new_url:
+            return {"status": "unchanged", "entries": 0, "reader_bodies": 0}
+        with self._lock, self._connect() as db:
+            source_exists = db.execute("SELECT 1 FROM feeds WHERE url = ?", (old_url,)).fetchone()
+            source_entries = int(
+                db.execute("SELECT count(*) FROM entries WHERE feed_url = ?", (old_url,)).fetchone()[0]
+            )
+            source_bodies = int(
+                db.execute("SELECT count(*) FROM reader_bodies WHERE feed_url = ?", (old_url,)).fetchone()[0]
+            )
+            if not source_exists and not source_entries and not source_bodies:
+                return {"status": "not_found", "entries": 0, "reader_bodies": 0}
+            source_rows = db.execute(
+                "SELECT entry_id, title, link, published, summary FROM entries WHERE feed_url = ?",
+                (old_url,),
+            ).fetchall()
+            id_moves: dict[str, str] = {}
+            for row in source_rows:
+                old_entry_id = str(row["entry_id"])
+                old_fallback = _fallback_entry_id(
+                    old_url,
+                    str(row["link"]),
+                    str(row["title"]),
+                    str(row["published"]),
+                )
+                new_entry_id = (
+                    _fallback_entry_id(
+                        new_url,
+                        str(row["link"]),
+                        str(row["title"]),
+                        str(row["published"]),
+                    )
+                    if old_entry_id == old_fallback
+                    else old_entry_id
+                )
+                id_moves[old_entry_id] = new_entry_id
+                db.execute(
+                    "INSERT INTO entries(feed_url, entry_id, title, link, published, summary) "
+                    "VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(feed_url, entry_id) DO NOTHING",
+                    (
+                        new_url,
+                        new_entry_id,
+                        row["title"],
+                        row["link"],
+                        row["published"],
+                        row["summary"],
+                    ),
+                )
+            for body in db.execute(
+                "SELECT entry_id, reader_id, content_version, reader_html FROM reader_bodies WHERE feed_url = ?",
+                (old_url,),
+            ).fetchall():
+                target_entry_id = id_moves.get(str(body["entry_id"]), str(body["entry_id"]))
+                destination_body = db.execute(
+                    "SELECT 1 FROM reader_bodies WHERE feed_url = ? AND entry_id = ?",
+                    (new_url, target_entry_id),
+                ).fetchone()
+                if not destination_body:
+                    db.execute(
+                        "UPDATE reader_bodies SET feed_url = ?, entry_id = ? WHERE feed_url = ? AND entry_id = ?",
+                        (new_url, target_entry_id, old_url, body["entry_id"]),
+                    )
+            if source_exists:
+                db.execute(
+                    "INSERT INTO feeds(url, etag, last_modified, last_status, last_error, last_checked, "
+                    "last_processed, last_inserted, last_duplicates) "
+                    "SELECT ?, etag, last_modified, last_status, last_error, last_checked, "
+                    "last_processed, last_inserted, last_duplicates FROM feeds WHERE url = ? "
+                    "ON CONFLICT(url) DO NOTHING",
+                    (new_url, old_url),
+                )
+            db.execute("DELETE FROM reader_bodies WHERE feed_url = ?", (old_url,))
+            db.execute("DELETE FROM entries WHERE feed_url = ?", (old_url,))
+            db.execute("DELETE FROM feeds WHERE url = ?", (old_url,))
+            return {"status": "migrated", "entries": source_entries, "reader_bodies": source_bodies}
+
     def _normalize(self, feed_url: str, body: bytes) -> list[dict[str, str]]:
         parsed = feedparser.parse(body)
         if getattr(parsed, "bozo", 0):
@@ -491,7 +573,7 @@ class FeedIntake:
             if not structured_source:
                 structured_source = str(summary_source)
             raw_id = str(item.get("id") or item.get("guid") or "").strip()
-            entry_id = raw_id or hashlib.sha256("\x1f".join((feed_url, link, title, published)).encode()).hexdigest()
+            entry_id = raw_id or _fallback_entry_id(feed_url, link, title, published)
             entries.append(
                 {
                     "entry_id": entry_id,
@@ -620,11 +702,13 @@ class FeedIntake:
             ]
             existing_bodies = {
                 (row["feed_url"], row["entry_id"]): {
+                    "reader_id": row["reader_id"],
                     "content_version": row["content_version"],
                     "reader_html": row["reader_html"],
                 }
                 for row in db.execute(
-                    "SELECT feed_url, entry_id, content_version, reader_html FROM reader_bodies WHERE feed_url = ?",
+                    "SELECT feed_url, entry_id, reader_id, content_version, reader_html "
+                    "FROM reader_bodies WHERE feed_url = ?",
                     (feed_url,),
                 ).fetchall()
             }
@@ -657,8 +741,8 @@ class FeedIntake:
             for entry in body_candidates:
                 body = str(entry.get("reader_html") or "")
                 version = 1
+                previous = existing_bodies.get((feed_url, entry["entry_id"]))
                 if not body and entry["entry_id"] not in normalized_ids:
-                    previous = existing_bodies.get((feed_url, entry["entry_id"]))
                     if previous:
                         body = str(previous["reader_html"])
                         version = int(previous["content_version"])
@@ -667,7 +751,13 @@ class FeedIntake:
                 db.execute(
                     "INSERT INTO reader_bodies(feed_url, entry_id, reader_id, content_version, reader_html) "
                     "VALUES(?, ?, ?, ?, ?)",
-                    (feed_url, entry["entry_id"], _reader_id(feed_url, entry["entry_id"]), version, body),
+                    (
+                        feed_url,
+                        entry["entry_id"],
+                        str(previous["reader_id"]) if previous else _reader_id(feed_url, entry["entry_id"]),
+                        version,
+                        body,
+                    ),
                 )
                 bodies_written += 1
             db.execute(
@@ -780,7 +870,7 @@ class FeedIntake:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT entries.entry_id, entries.feed_url, entries.title, entries.link, entries.published, "
-                "entries.summary, reader_bodies.entry_id IS NOT NULL AS has_reader "
+                "entries.summary, reader_bodies.entry_id IS NOT NULL AS has_reader, reader_bodies.reader_id "
                 "FROM entries LEFT JOIN reader_bodies USING(feed_url, entry_id) "
                 f"{where} ORDER BY entries.rowid DESC LIMIT ?",
                 params,
@@ -790,9 +880,12 @@ class FeedIntake:
             item = dict(row)
             has_reader = bool(item.pop("has_reader"))
             summary = str(item.pop("summary"))
+            stored_reader_id = item.pop("reader_id")
             item["excerpt"] = _excerpt(summary)
             item["has_reader"] = has_reader
-            item["reader_id"] = _reader_id(str(item["feed_url"]), str(item["entry_id"]))
+            item["reader_id"] = (
+                str(stored_reader_id) if has_reader else _reader_id(str(item["feed_url"]), str(item["entry_id"]))
+            )
             result.append(item)
         return result
 

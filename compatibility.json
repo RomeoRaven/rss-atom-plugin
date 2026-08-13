@@ -1,0 +1,5 @@
+{
+  "plugin_version": "0.9.0",
+  "minimum_protoagent_version": "0.135.0",
+  "compatibility_basis": "Current accepted RomeoRaven protoAgent runtime pinned for the v0.9.0 beta release"
+}
